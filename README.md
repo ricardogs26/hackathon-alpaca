@@ -96,3 +96,7 @@ tests/        deterministic tests for the options + policy layers
 
 Scaffold. Options-selection and policy logic land with tests before market open;
 the agent goes live on the first trading day of the hackathon.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
