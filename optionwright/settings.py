@@ -1,0 +1,69 @@
+"""
+Central configuration for optionwright. Single source of truth, read from the
+environment via pydantic-settings. See .env.example for every variable.
+"""
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    # ── Alpaca (paper only) ───────────────────────────────────────────────────
+    alpaca_api_key: str = Field(default="", alias="ALPACA_API_KEY")
+    alpaca_secret_key: str = Field(default="", alias="ALPACA_SECRET_KEY")
+    alpaca_paper: bool = Field(default=True, alias="ALPACA_PAPER")
+
+    # ── LLM (OpenAI-compatible) ───────────────────────────────────────────────
+    llm_base_url: str = Field(default="http://localhost:11434/v1", alias="LLM_BASE_URL")
+    llm_api_key: str = Field(default="not-needed", alias="LLM_API_KEY")
+    llm_model: str = Field(default="qwen3.5:9b", alias="LLM_MODEL")
+    llm_timeout_seconds: int = Field(default=45, alias="LLM_TIMEOUT_SECONDS")
+
+    # ── Datastores ────────────────────────────────────────────────────────────
+    postgres_host: str = Field(default="postgres", alias="POSTGRES_HOST")
+    postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
+    postgres_db: str = Field(default="optionwright", alias="POSTGRES_DB")
+    postgres_user: str = Field(default="optionwright", alias="POSTGRES_USER")
+    postgres_password: str = Field(default="change-me", alias="POSTGRES_PASSWORD")
+    redis_host: str = Field(default="redis", alias="REDIS_HOST")
+    redis_port: int = Field(default=6379, alias="REDIS_PORT")
+    redis_db: int = Field(default=0, alias="REDIS_DB")
+
+    # ── Agent behavior ────────────────────────────────────────────────────────
+    cycle_seconds: int = Field(default=300, alias="CYCLE_SECONDS")
+    underlyings: str = Field(default="SPY,QQQ", alias="UNDERLYINGS")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+        "populate_by_name": True,
+    }
+
+    @field_validator("alpaca_paper")
+    @classmethod
+    def _refuse_live(cls, v: bool) -> bool:
+        # Hard guardrail: this project is paper-only by design.
+        if v is False:
+            raise ValueError("ALPACA_PAPER=false is not allowed — optionwright is paper-only")
+        return v
+
+    @property
+    def underlyings_list(self) -> list[str]:
+        return [s.strip().upper() for s in self.underlyings.split(",") if s.strip()]
+
+    @property
+    def postgres_dsn(self) -> str:
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
