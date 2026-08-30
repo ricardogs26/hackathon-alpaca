@@ -68,7 +68,7 @@ def record_decision(
 def record_position(spread: VerticalSpread, contracts: int, order_id: str | None) -> int:
     with _conn() as c:
         row = c.execute(
-            "INSERT INTO positions (underlying,expiry,right,short_symbol,long_symbol,contracts,credit,max_loss,order_id)"
+            "INSERT INTO positions (underlying,expiry,option_right,short_symbol,long_symbol,contracts,credit,max_loss,order_id)"
             " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (spread.underlying, spread.expiry, spread.right.value, spread.short_leg.symbol,
              spread.long_leg.symbol, contracts, spread.credit, spread.max_loss * contracts, order_id),

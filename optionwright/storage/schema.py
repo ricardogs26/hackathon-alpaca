@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS positions (
     ts_open       TIMESTAMPTZ NOT NULL DEFAULT now(),
     underlying    TEXT NOT NULL,
     expiry        DATE NOT NULL,
-    right         TEXT NOT NULL,
+    option_right  TEXT NOT NULL,              -- "right" is a reserved word in SQL
     short_symbol  TEXT NOT NULL,
     long_symbol   TEXT NOT NULL,
     contracts     INTEGER NOT NULL,

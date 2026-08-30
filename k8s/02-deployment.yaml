@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: optionwright
+  namespace: hackathon
+  labels:
+    app: optionwright
+spec:
+  replicas: 1                     # single replica: one scheduler, no double cycles
+  selector:
+    matchLabels:
+      app: optionwright
+  template:
+    metadata:
+      labels:
+        app: optionwright
+    spec:
+      containers:
+        - name: optionwright
+          image: registry.richardx.dev/optionwright:0.1.0
+          ports:
+            - containerPort: 8080
+          env:
+            # Alpaca (paper) — from the secret
+            - name: ALPACA_API_KEY
+              valueFrom: { secretKeyRef: { name: optionwright-secrets, key: ALPACA_API_KEY } }
+            - name: ALPACA_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: optionwright-secrets, key: ALPACA_SECRET_KEY } }
+            - name: ALPACA_PAPER
+              value: "true"
+            # LLM — the shared cluster Ollama (qwen3.5:9b), native path for think=false
+            - name: LLM_BASE_URL
+              value: "http://ollama-service.amael-ia:11434/v1"
+            - name: LLM_MODEL
+              value: "qwen3.5:9b"
+            - name: LLM_NATIVE_OLLAMA
+              value: "true"
+            # Postgres — shared instance in amael-ia, dedicated DB "hackathon"
+            - name: POSTGRES_HOST
+              value: "postgres-service.amael-ia"
+            - name: POSTGRES_DB
+              value: "hackathon"
+            - name: POSTGRES_USER
+              value: "hackathon"
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: optionwright-secrets, key: POSTGRES_PASSWORD } }
+            # Agent behavior
+            - name: UNDERLYINGS
+              value: "SPY,QQQ"
+            - name: CYCLE_SECONDS
+              value: "300"
+            - name: LOG_LEVEL
+              value: "INFO"
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: optionwright-service
+  namespace: hackathon
+spec:
+  selector:
+    app: optionwright
+  ports:
+    - port: 8080
+      targetPort: 8080

@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: optionwright-ingress
+  namespace: hackathon
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  tls:
+    - hosts:
+        - optionwright.richardx.dev
+      secretName: optionwright-tls
+  rules:
+    - host: optionwright.richardx.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: optionwright-service
+                port:
+                  number: 8080
