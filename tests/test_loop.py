@@ -1,0 +1,83 @@
+"""
+End-to-end pipeline tests with fully faked dependencies. Proves the wiring:
+LLM proposes a direction, code sizes and gates it, and only an approved trade
+reaches the (fake) broker. No Alpaca, no LLM, no Postgres.
+"""
+from __future__ import annotations
+
+from optionwright.agent.analyzer import Proposal
+from optionwright.agent.loop import Deps, run_cycle
+from optionwright.options.models import Direction, OptionQuote, Right
+from optionwright.policy.gates import PolicyState
+
+
+def _put_chain():
+    def q(strike, delta, bid, ask):
+        return OptionQuote(f"P{strike}", "SPY", Right.PUT, strike, "2026-09-04", bid, ask, delta, 5000, 500)
+    return [q(645, -0.45, 6.0, 6.1), q(640, -0.35, 4.0, 4.1), q(635, -0.28, 2.5, 2.6),
+            q(630, -0.20, 1.5, 1.6), q(625, -0.12, 0.8, 0.9)]
+
+
+def _call_chain():
+    def q(strike, delta, bid, ask):
+        return OptionQuote(f"C{strike}", "SPY", Right.CALL, strike, "2026-09-04", bid, ask, delta, 5000, 500)
+    return [q(645, 0.30, 2.4, 2.5), q(650, 0.22, 1.4, 1.5), q(655, 0.14, 0.7, 0.8)]
+
+
+class _Recorder:
+    def __init__(self):
+        self.decisions = []
+        self.positions = []
+        self.submitted = []
+
+    def deps(self, proposal, state=None):
+        state = state or PolicyState(equity=100_000, open_positions=0, consecutive_losses=0, premium_at_risk_today=0.0)
+        return Deps(
+            account=lambda: (100_000.0, 100_000.0),
+            nearest_expiry=lambda u: "2026-09-04",
+            fetch_chain=lambda u, e, r: _put_chain() if r is Right.PUT else _call_chain(),
+            propose=lambda ctx: proposal,
+            build_state=lambda u, eq: state,
+            submit_spread=lambda sp, n: self.submitted.append((sp, n)) or {"id": "order-123"},
+            record_decision=lambda *a, **k: self.decisions.append((a, k)),
+            record_position=lambda sp, n, oid: self.positions.append((sp, n, oid)) or 77,
+            save_equity=lambda eq, cash: None,
+        )
+
+
+def test_bullish_opens_a_position():
+    rec = _Recorder()
+    res = run_cycle("SPY", rec.deps(Proposal(Direction.BULLISH, 0.7, "uptrend")))
+    assert res["action"] == "opened"
+    assert res["direction"] == "bullish"
+    assert res["order_id"] == "order-123"
+    assert res["position_id"] == 77
+    assert len(rec.submitted) == 1
+    spread, n = rec.submitted[0]
+    assert spread.right is Right.PUT and n >= 1
+
+
+def test_abstain_opens_nothing():
+    rec = _Recorder()
+    res = run_cycle("SPY", rec.deps(Proposal(Direction.ABSTAIN, 0.0, "chop")))
+    assert res["action"] == "abstain"
+    assert rec.submitted == []
+    assert rec.positions == []
+
+
+def test_gate_veto_blocks_trade():
+    rec = _Recorder()
+    # circuit breaker tripped -> gates veto regardless of a bullish proposal
+    tripped = PolicyState(equity=100_000, open_positions=0, consecutive_losses=3, premium_at_risk_today=0.0)
+    res = run_cycle("SPY", rec.deps(Proposal(Direction.BULLISH, 0.9, "strong"), state=tripped))
+    assert res["action"] == "vetoed"
+    assert "breaker" in res["reason"]
+    assert rec.submitted == []
+
+
+def test_bearish_uses_call_spread():
+    rec = _Recorder()
+    res = run_cycle("SPY", rec.deps(Proposal(Direction.BEARISH, 0.6, "rolling over")))
+    assert res["action"] == "opened"
+    spread, n = rec.submitted[0]
+    assert spread.right is Right.CALL
