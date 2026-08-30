@@ -94,8 +94,15 @@ tests/        deterministic tests for the options + policy layers
 
 ## Status
 
-Scaffold. Options-selection and policy logic land with tests before market open;
-the agent goes live on the first trading day of the hackathon.
+Core complete and deployed. The full pipeline is built and tested end to end
+(56 tests): chain reading, spread selection, the seven risk gates, the LLM
+analyzer, multi-leg execution through the Alpaca CLI, Postgres persistence, and
+Prometheus metrics. The agent runs on a schedule, skipping cycles while the
+market is closed, and trades live from the first market open of the hackathon.
+
+- **Demo**: `optionwright.richardx.dev` (read-only status + metrics)
+- **Strategy write-up**: [`docs/writeup.md`](docs/writeup.md)
+- **Metrics**: `/metrics` (Prometheus), scraped into Grafana
 
 ## License
 
