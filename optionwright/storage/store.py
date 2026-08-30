@@ -77,16 +77,22 @@ def record_position(spread: VerticalSpread, contracts: int, order_id: str | None
 
 
 def close_position(position_id: int, realized_pnl: float, exit_reason: str) -> None:
+    from optionwright import metrics
+
     with _conn() as c:
         c.execute(
             "UPDATE positions SET status='closed', ts_close=now(), realized_pnl=%s, exit_reason=%s WHERE id=%s",
             (realized_pnl, exit_reason, position_id),
         )
+    metrics.record_realized_pnl(realized_pnl)
 
 
 def save_equity(equity: float, cash: float | None) -> None:
+    from optionwright import metrics
+
     with _conn() as c:
         c.execute("INSERT INTO equity_curve (equity,cash) VALUES (%s,%s)", (equity, cash))
+    metrics.set_equity(equity)
 
 
 def _consecutive_losses(realized_pnls_desc: list[float]) -> int:

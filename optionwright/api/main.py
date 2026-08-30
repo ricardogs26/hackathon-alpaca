@@ -50,6 +50,14 @@ def health() -> dict:
     return {"status": "ok", "service": "optionwright"}
 
 
+@app.get("/metrics")
+def metrics_endpoint():
+    from fastapi import Response
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.get("/api/status")
 def status() -> dict:
     s = get_settings()

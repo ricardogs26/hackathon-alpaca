@@ -49,13 +49,18 @@ def run_once() -> list[dict]:
         logger.info("market closed — skipping cycle")
         return [{"action": "skipped", "reason": "market closed"}]
 
+    from optionwright import metrics
+
     deps = _build_deps()
     results = []
     for underlying in s.underlyings_list:
         try:
-            results.append(run_cycle(underlying, deps))
+            result = run_cycle(underlying, deps)
         except Exception as exc:  # one bad underlying never kills the whole pass
             logger.error("cycle failed for %s: %s", underlying, exc, exc_info=True)
-            results.append({"underlying": underlying, "action": "error", "reason": str(exc)[:200]})
+            metrics.ERRORS.labels(where="cycle").inc()
+            result = {"underlying": underlying, "action": "error", "reason": str(exc)[:200]}
+        metrics.record_cycle(result)
+        results.append(result)
     logger.info("cycle pass complete: %s", [r.get("action") for r in results])
     return results

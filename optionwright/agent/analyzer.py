@@ -129,10 +129,19 @@ def _propose_openai(s, context: dict) -> str:
 
 def propose(context: dict) -> Proposal:
     """Ask the LLM for a direction. Any failure returns ABSTAIN."""
+    import time
+
+    from optionwright import metrics
+
     s = get_settings()
+    t0 = time.time()
     try:
         raw = _propose_ollama_native(s, context) if s.llm_native_ollama else _propose_openai(s, context)
     except Exception as exc:  # network, timeout, bad endpoint — all safe-abstain
         logger.warning("analyzer LLM call failed: %s", exc)
+        metrics.ERRORS.labels(where="llm").inc()
         return _ABSTAIN
-    return _parse_proposal(raw)
+    proposal = _parse_proposal(raw)
+    metrics.record_llm(time.time() - t0, proposal.confidence)
+    metrics.record_decision(proposal.direction.value)
+    return proposal
