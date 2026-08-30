@@ -1,0 +1,22 @@
+# ServiceMonitor para que el Prometheus del cluster (kube-prometheus-stack)
+# scrapee las métricas de optionwright. Vive en el namespace observability
+# (donde el operador ya observa ServiceMonitors) y selecciona el service de
+# hackathon por label con namespaceSelector any:true — mismo patrón que
+# amael-agents-monitor.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: optionwright-monitor
+  namespace: observability
+  labels:
+    project: optionwright
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      app: optionwright
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
