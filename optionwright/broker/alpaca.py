@@ -14,14 +14,19 @@ without any network. `fetch_chain` is the thin networked wrapper around it.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import subprocess
 from datetime import date, timedelta
 from functools import lru_cache
 
-from optionwright.options.models import OptionQuote, Right
+from optionwright.options.models import OptionQuote, Right, VerticalSpread
 from optionwright.settings import get_settings
 
 logger = logging.getLogger("optionwright.broker")
+
+ALPACA_CLI = os.environ.get("ALPACA_CLI_BIN", "alpaca")
 
 
 # ── Clients (lazy, cached) ────────────────────────────────────────────────────
@@ -151,3 +156,63 @@ def fetch_chain(underlying: str, expiry: str, right: Right, *, strike_span: floa
             quotes.append(q)
     logger.info("fetch_chain %s %s %s -> %d quotes", underlying, expiry, right.value, len(quotes))
     return quotes
+
+
+# ── Execution via the Alpaca CLI (multi-leg) ──────────────────────────────────
+def _build_mleg_args(spread: VerticalSpread, contracts: int, limit_price: float) -> list[str]:
+    """
+    Build the `alpaca order submit` argv for a defined-risk credit vertical, as a
+    pure function (unit-tested, never executes). The short leg is sold to open,
+    the long leg bought to open; both carry ratio 1. order-class mleg means the
+    top-level symbol is omitted and each leg names its own contract.
+    """
+    if contracts < 1:
+        raise ValueError("contracts must be >= 1")
+    legs = [
+        {
+            "symbol": spread.short_leg.symbol,
+            "ratio_qty": "1",
+            "side": "sell",
+            "position_intent": "sell_to_open",
+        },
+        {
+            "symbol": spread.long_leg.symbol,
+            "ratio_qty": "1",
+            "side": "buy",
+            "position_intent": "buy_to_open",
+        },
+    ]
+    return [
+        ALPACA_CLI, "order", "submit",
+        "--order-class", "mleg",
+        "--qty", str(contracts),
+        "--type", "limit",
+        "--limit-price", f"{limit_price:.2f}",
+        "--time-in-force", "day",
+        "--legs", json.dumps(legs),
+    ]
+
+
+def _cli_env() -> dict:
+    s = get_settings()
+    env = dict(os.environ)
+    # The CLI reads these for CI/automation instead of a stored profile.
+    env["ALPACA_API_KEY"] = s.alpaca_api_key
+    env["ALPACA_SECRET_KEY"] = s.alpaca_secret_key
+    return env
+
+
+def submit_spread(spread: VerticalSpread, contracts: int, limit_price: float | None = None) -> dict:
+    """
+    Place the two legs as one multi-leg order through the Alpaca CLI and return
+    the parsed order JSON. Defaults the limit to the spread's net credit. Raises
+    on non-zero exit so the loop records a failed decision rather than a phantom
+    fill.
+    """
+    price = spread.credit if limit_price is None else limit_price
+    argv = _build_mleg_args(spread, contracts, price)
+    logger.info("submit_spread %s x%d @ %.2f", spread.underlying, contracts, price)
+    proc = subprocess.run(argv, env=_cli_env(), capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        raise RuntimeError(f"alpaca CLI failed ({proc.returncode}): {proc.stderr.strip()[:300]}")
+    return json.loads(proc.stdout)
