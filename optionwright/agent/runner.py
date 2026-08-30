@@ -44,12 +44,14 @@ def _build_deps() -> Deps:
 
 def run_once() -> list[dict]:
     """One pass over every configured underlying. Skips when the market is closed."""
+    from optionwright import metrics
+
     s = get_settings()
     if not _market_open():
         logger.info("market closed — skipping cycle")
-        return [{"action": "skipped", "reason": "market closed"}]
-
-    from optionwright import metrics
+        result = {"action": "skipped", "reason": "market closed"}
+        metrics.record_cycle(result)
+        return [result]
 
     deps = _build_deps()
     results = []

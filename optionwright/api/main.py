@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from optionwright import metrics  # noqa: F401 — import so metrics register at startup
 from optionwright.settings import get_settings
 
 logger = logging.getLogger("optionwright.api")
