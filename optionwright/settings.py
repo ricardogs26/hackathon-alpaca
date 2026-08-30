@@ -20,7 +20,13 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="http://localhost:11434/v1", alias="LLM_BASE_URL")
     llm_api_key: str = Field(default="not-needed", alias="LLM_API_KEY")
     llm_model: str = Field(default="qwen3.5:9b", alias="LLM_MODEL")
-    llm_timeout_seconds: int = Field(default=45, alias="LLM_TIMEOUT_SECONDS")
+    llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
+    # Ollama serves qwen3.5 in "thinking" mode by default (~22s/call and it can
+    # eat the whole token budget on hidden reasoning, returning empty content).
+    # Its OpenAI-compatible endpoint ignores think=false, so for Ollama we call
+    # the NATIVE /api/chat (think=false -> ~0.6s). Set false to use the plain
+    # OpenAI-compatible path for Featherless / real OpenAI / other hosts.
+    llm_native_ollama: bool = Field(default=True, alias="LLM_NATIVE_OLLAMA")
 
     # ── Datastores ────────────────────────────────────────────────────────────
     postgres_host: str = Field(default="postgres", alias="POSTGRES_HOST")

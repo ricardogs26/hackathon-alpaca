@@ -80,23 +80,58 @@ def build_user_prompt(context: dict) -> str:
     return json.dumps(context, separators=(",", ":"))
 
 
+def _messages(context: dict) -> list[dict]:
+    return [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": build_user_prompt(context)},
+    ]
+
+
+def _propose_ollama_native(s, context: dict) -> str:
+    """Ollama native /api/chat with think=false (its OpenAI endpoint ignores it)."""
+    import httpx
+
+    host = s.llm_base_url.rstrip("/").removesuffix("/v1")
+    resp = httpx.post(
+        f"{host}/api/chat",
+        json={
+            "model": s.llm_model,
+            "think": False,
+            "format": "json",
+            "stream": False,
+            "keep_alive": "30m",  # hold in VRAM so 5-min-apart cycles stay warm
+            "options": {"temperature": 0.2, "num_predict": 150},
+            "messages": _messages(context),
+        },
+        timeout=s.llm_timeout_seconds,
+    )
+    resp.raise_for_status()
+    return resp.json().get("message", {}).get("content", "") or ""
+
+
+def _propose_openai(s, context: dict) -> str:
+    """OpenAI-compatible path for Featherless / real OpenAI / other hosts."""
+    from openai import OpenAI
+
+    # max_retries=0: a slow call fails once and safe-abstains, instead of the
+    # client silently retrying and tripling the wall time.
+    client = OpenAI(base_url=s.llm_base_url, api_key=s.llm_api_key,
+                    timeout=s.llm_timeout_seconds, max_retries=0)
+    resp = client.chat.completions.create(
+        model=s.llm_model,
+        messages=_messages(context),
+        temperature=0.2,
+        max_tokens=150,
+        response_format={"type": "json_object"},
+    )
+    return resp.choices[0].message.content or ""
+
+
 def propose(context: dict) -> Proposal:
     """Ask the LLM for a direction. Any failure returns ABSTAIN."""
     s = get_settings()
     try:
-        from openai import OpenAI
-
-        client = OpenAI(base_url=s.llm_base_url, api_key=s.llm_api_key, timeout=s.llm_timeout_seconds)
-        resp = client.chat.completions.create(
-            model=s.llm_model,
-            messages=[
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": build_user_prompt(context)},
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"},
-        )
-        raw = resp.choices[0].message.content or ""
+        raw = _propose_ollama_native(s, context) if s.llm_native_ollama else _propose_openai(s, context)
     except Exception as exc:  # network, timeout, bad endpoint — all safe-abstain
         logger.warning("analyzer LLM call failed: %s", exc)
         return _ABSTAIN
