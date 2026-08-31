@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: optionwright
-          image: registry.richardx.dev/optionwright:0.1.11
+          image: registry.richardx.dev/optionwright:0.1.12
           ports:
             - containerPort: 8080
           env:
@@ -60,7 +60,7 @@ spec:
             - name: UNDERLYINGS
               value: "SPY,QQQ"
             - name: CYCLE_SECONDS
-              value: "300"
+              value: "120"
             - name: LOG_LEVEL
               value: "INFO"
           readinessProbe:
