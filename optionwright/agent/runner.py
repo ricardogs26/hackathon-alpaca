@@ -77,6 +77,7 @@ def manage_positions() -> list[dict]:
 
     all_positions = store.get_positions(200)
     metrics.set_position_gauges(all_positions)
+    metrics.clear_position_info()  # re-populated below for currently-open positions
     for pos in all_positions:
         if pos["status"] != "open":
             continue
@@ -84,20 +85,27 @@ def manage_positions() -> list[dict]:
             price = alpaca.current_spread_price(pos["short_symbol"], pos["long_symbol"])
             if price is None:
                 continue
+            credit = float(pos["credit"])
             is_expiry_day = str(pos["expiry"]) <= today
-            decision = decide_exit(float(pos["credit"]), price, is_expiry_day, params)
+            decision = decide_exit(credit, price, is_expiry_day, params)
+            captured_pct = (credit - price) / credit * 100 if credit > 0 else 0.0
+            pnl_now = round((credit - price) * 100 * pos["contracts"], 2)
+            # Surface the live evaluation as a Grafana table row.
+            metrics.set_position_info(
+                pos["id"], pos["underlying"], credit, price, captured_pct,
+                "close" if decision.close else "hold", pnl_now,
+            )
             if not decision.close:
                 continue
             # Cross the spread by a few cents so the close actually fills (SPY/QQQ
             # options are penny-wide). We estimate realized P&L from the mid.
             close_limit = round(price + 0.05, 2)
             alpaca.close_spread(pos["short_symbol"], pos["long_symbol"], pos["contracts"], close_limit)
-            realized = round((float(pos["credit"]) - price) * 100 * pos["contracts"], 2)
-            store.close_position(pos["id"], realized, decision.reason)
-            metrics.record_realized_pnl(realized)
-            logger.info("closed position %s: %s, P&L %.2f", pos["id"], decision.reason, realized)
+            store.close_position(pos["id"], pnl_now, decision.reason)
+            metrics.record_realized_pnl(pnl_now)
+            logger.info("closed position %s: %s, P&L %.2f", pos["id"], decision.reason, pnl_now)
             results.append({"position_id": pos["id"], "action": "closed",
-                            "reason": decision.reason, "realized_pnl": realized})
+                            "reason": decision.reason, "realized_pnl": pnl_now})
         except Exception as exc:
             logger.error("manage position %s failed: %s", pos.get("id"), exc, exc_info=True)
             metrics.ERRORS.labels(where="manage").inc()

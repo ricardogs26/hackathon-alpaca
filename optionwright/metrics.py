@@ -63,6 +63,31 @@ def set_position_gauges(positions: list) -> None:
     """positions: rows from store.get_positions (each a dict with 'status')."""
     POSITIONS_TOTAL.set(len(positions))
     OPEN_POSITIONS.set(sum(1 for p in positions if p.get("status") == "open"))
+
+
+# Per-open-position live evaluation, rendered as a Grafana table. The value is
+# the P&L if closed now; the descriptive columns ride as labels. Cleared and
+# re-set each cycle so closed positions drop out.
+POSITION_INFO = Gauge(
+    "optionwright_position_info",
+    "Open position eval (value = P&L in USD if closed now)",
+    ["pos_id", "underlying", "credit", "close_price", "captured_pct", "decision"],
+)
+
+
+def clear_position_info() -> None:
+    POSITION_INFO.clear()
+
+
+def set_position_info(pos_id, underlying, credit, close_price, captured_pct, decision, pnl) -> None:
+    POSITION_INFO.labels(
+        pos_id=str(pos_id),
+        underlying=underlying,
+        credit=f"{credit:.2f}",
+        close_price=f"{close_price:.2f}",
+        captured_pct=f"{captured_pct:.0f}%",
+        decision=decision,
+    ).set(pnl)
 ERRORS = Counter(
     "optionwright_errors_total",
     "Errors during a cycle",
