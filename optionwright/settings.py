@@ -46,10 +46,15 @@ class Settings(BaseSettings):
     cycle_seconds: int = Field(default=300, alias="CYCLE_SECONDS")
     underlyings: str = Field(default="SPY,QQQ", alias="UNDERLYINGS")
     # Exit management
-    take_profit_pct: float = Field(default=0.50, alias="TAKE_PROFIT_PCT")
+    take_profit_pct: float = Field(default=0.40, alias="TAKE_PROFIT_PCT")
     stop_loss_mult: float = Field(default=2.0, alias="STOP_LOSS_MULT")
     expiry_min_days: int = Field(default=3, alias="EXPIRY_MIN_DAYS")   # target 3-5 DTE
     expiry_max_days: int = Field(default=7, alias="EXPIRY_MAX_DAYS")
+    # Risk gates (deployment increases capital-at-risk moderately for the contest)
+    max_open_positions: int = Field(default=5, alias="MAX_OPEN_POSITIONS")
+    max_loss_pct: float = Field(default=0.015, alias="MAX_LOSS_PCT")
+    cooldown_seconds: float = Field(default=1800.0, alias="COOLDOWN_SECONDS")  # 30 min
+    daily_budget_pct: float = Field(default=0.10, alias="DAILY_BUDGET_PCT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     model_config = {

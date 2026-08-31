@@ -63,6 +63,17 @@ spec:
               value: "120"
             - name: LOG_LEVEL
               value: "INFO"
+            # Risk / strategy tuning (moderate deployment increase for the contest)
+            - name: MAX_OPEN_POSITIONS
+              value: "5"
+            - name: MAX_LOSS_PCT
+              value: "0.015"
+            - name: COOLDOWN_SECONDS
+              value: "1800"
+            - name: DAILY_BUDGET_PCT
+              value: "0.10"
+            - name: TAKE_PROFIT_PCT
+              value: "0.40"
           readinessProbe:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5

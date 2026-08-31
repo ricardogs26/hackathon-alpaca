@@ -124,7 +124,12 @@ def _build_deps() -> Deps:
         record_decision=store.record_decision,
         record_position=store.record_position,
         save_equity=store.save_equity,
-        rules=RuleSet(),
+        rules=RuleSet(
+            max_open_positions=s.max_open_positions,
+            max_loss_pct=s.max_loss_pct,
+            cooldown_seconds=s.cooldown_seconds,
+            daily_budget_pct=s.daily_budget_pct,
+        ),
     )
 
 
