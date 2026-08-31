@@ -17,10 +17,10 @@ data:
       ],
       "timezone": "",
       "schemaVersion": 39,
-      "version": 1,
+      "version": 2,
       "refresh": "30s",
       "time": {
-        "from": "now-24h",
+        "from": "now-6h",
         "to": "now"
       },
       "templating": {
@@ -43,7 +43,7 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "optionwright_equity_usd",
+              "expr": "max(optionwright_equity_usd)",
               "datasource": null,
               "refId": "A"
             }
@@ -82,7 +82,7 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "sum(optionwright_realized_pnl_usd_total{result=\"gain\"}) - sum(optionwright_realized_pnl_usd_total{result=\"loss\"})",
+              "expr": "(sum(optionwright_realized_pnl_usd_total{result=\"gain\"}) or vector(0)) - (sum(optionwright_realized_pnl_usd_total{result=\"loss\"}) or vector(0))",
               "datasource": null,
               "refId": "A"
             }
@@ -133,7 +133,7 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "sum(optionwright_positions_opened_total)",
+              "expr": "sum(optionwright_positions_opened_total) or vector(0)",
               "datasource": null,
               "refId": "A"
             }
@@ -155,7 +155,7 @@ data:
         },
         {
           "id": 4,
-          "title": "Cycle errors",
+          "title": "Cycle errors (current pod)",
           "type": "stat",
           "gridPos": {
             "x": 18,
@@ -166,7 +166,7 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "sum(optionwright_errors_total)",
+              "expr": "sum(optionwright_errors_total) or vector(0)",
               "datasource": null,
               "refId": "A"
             }
@@ -215,9 +215,10 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "optionwright_equity_usd",
+              "expr": "max(optionwright_equity_usd)",
               "datasource": null,
-              "refId": "A"
+              "refId": "A",
+              "legendFormat": "equity"
             }
           ],
           "fieldConfig": {
@@ -231,7 +232,11 @@ data:
             },
             "overrides": []
           },
-          "options": {}
+          "options": {
+            "legend": {
+              "showLegend": false
+            }
+          }
         },
         {
           "id": 6,
@@ -246,7 +251,7 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "optionwright_llm_confidence",
+              "expr": "max(optionwright_llm_confidence)",
               "datasource": null,
               "refId": "A"
             }
@@ -276,7 +281,13 @@ data:
             },
             "overrides": []
           },
-          "options": {}
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          }
         },
         {
           "id": 7,
