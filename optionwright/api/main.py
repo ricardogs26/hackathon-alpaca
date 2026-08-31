@@ -30,6 +30,9 @@ async def lifespan(app: FastAPI):
     try:
         store.init_schema()
         metrics.set_position_gauges(store.get_positions(200))  # correct at rest, before any cycle
+        curve = store.get_equity_curve(1)  # seed equity so it doesn't flash $0 after a restart
+        if curve:
+            metrics.set_equity(curve[-1]["equity"])
     except Exception as exc:  # DB may still be starting; scheduler retries anyway
         logger.warning("startup DB step deferred: %s", exc)
 
