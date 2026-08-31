@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     # ── Agent behavior ────────────────────────────────────────────────────────
     cycle_seconds: int = Field(default=300, alias="CYCLE_SECONDS")
     underlyings: str = Field(default="SPY,QQQ", alias="UNDERLYINGS")
+    # Exit management
+    take_profit_pct: float = Field(default=0.50, alias="TAKE_PROFIT_PCT")
+    stop_loss_mult: float = Field(default=2.0, alias="STOP_LOSS_MULT")
+    expiry_min_days: int = Field(default=3, alias="EXPIRY_MIN_DAYS")   # target 3-5 DTE
+    expiry_max_days: int = Field(default=7, alias="EXPIRY_MAX_DAYS")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     model_config = {

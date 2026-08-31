@@ -58,10 +58,55 @@ def _minutes_since_open() -> float | None:
         return None
 
 
+def manage_positions() -> list[dict]:
+    """
+    Check every open spread and close it on take-profit, stop-loss, or expiration
+    day. Runs before opening new positions each cycle. Errors on one position
+    never stop the others.
+    """
+    from datetime import date
+
+    from optionwright import metrics
+    from optionwright.agent.exits import ExitParams, decide_exit
+    from optionwright.storage import store
+
+    s = get_settings()
+    params = ExitParams(take_profit_pct=s.take_profit_pct, stop_mult=s.stop_loss_mult)
+    today = date.today().isoformat()
+    results = []
+
+    for pos in store.get_positions(200):
+        if pos["status"] != "open":
+            continue
+        try:
+            price = alpaca.current_spread_price(pos["short_symbol"], pos["long_symbol"])
+            if price is None:
+                continue
+            is_expiry_day = str(pos["expiry"]) <= today
+            decision = decide_exit(float(pos["credit"]), price, is_expiry_day, params)
+            if not decision.close:
+                continue
+            # Cross the spread by a few cents so the close actually fills (SPY/QQQ
+            # options are penny-wide). We estimate realized P&L from the mid.
+            close_limit = round(price + 0.05, 2)
+            alpaca.close_spread(pos["short_symbol"], pos["long_symbol"], pos["contracts"], close_limit)
+            realized = round((float(pos["credit"]) - price) * 100 * pos["contracts"], 2)
+            store.close_position(pos["id"], realized, decision.reason)
+            metrics.record_realized_pnl(realized)
+            logger.info("closed position %s: %s, P&L %.2f", pos["id"], decision.reason, realized)
+            results.append({"position_id": pos["id"], "action": "closed",
+                            "reason": decision.reason, "realized_pnl": realized})
+        except Exception as exc:
+            logger.error("manage position %s failed: %s", pos.get("id"), exc, exc_info=True)
+            metrics.ERRORS.labels(where="manage").inc()
+    return results
+
+
 def _build_deps() -> Deps:
+    s = get_settings()
     return Deps(
         account=_account,
-        nearest_expiry=lambda u: alpaca.nearest_expiry(u, min_days=1, max_days=10),
+        nearest_expiry=lambda u: alpaca.nearest_expiry(u, min_days=s.expiry_min_days, max_days=s.expiry_max_days),
         fetch_chain=alpaca.fetch_chain,
         propose=propose,
         build_state=lambda u, eq: store.build_policy_state(u, eq, minutes_since_open=_minutes_since_open()),
@@ -84,8 +129,13 @@ def run_once() -> list[dict]:
         metrics.record_cycle(result)
         return [result]
 
+    # Manage exits first: take-profit, stop, or expiration-day close.
+    exits = manage_positions()
+    for e in exits:
+        metrics.CYCLES.labels(result="closed").inc()
+
     deps = _build_deps()
-    results = []
+    results = list(exits)
     for underlying in s.underlyings_list:
         try:
             result = run_cycle(underlying, deps)

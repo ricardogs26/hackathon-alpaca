@@ -53,3 +53,14 @@ def test_rejects_zero_contracts():
 
     with pytest.raises(ValueError):
         _build_mleg_args(_bull_put(), contracts=0, limit_price=0.70)
+
+
+def test_close_args_reverse_intents():
+    from optionwright.broker.alpaca import _build_mleg_close_args
+    argv = _build_mleg_close_args("SPY260831P00767000", "SPY260831P00762000", contracts=2, limit_price=0.40)
+    assert "mleg" in argv
+    assert argv[argv.index("--qty") + 1] == "2"
+    legs = json.loads(argv[argv.index("--legs") + 1])
+    short, long = legs
+    assert short["side"] == "buy" and short["position_intent"] == "buy_to_close"
+    assert long["side"] == "sell" and long["position_intent"] == "sell_to_close"

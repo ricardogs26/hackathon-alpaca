@@ -193,6 +193,60 @@ def _build_mleg_args(spread: VerticalSpread, contracts: int, limit_price: float)
     ]
 
 
+def current_spread_price(short_symbol: str, long_symbol: str) -> float | None:
+    """
+    Current debit to close the spread (short mid − long mid). This is what you'd
+    pay to buy the credit spread back. None if a quote is missing.
+    """
+    from alpaca.data.requests import OptionLatestQuoteRequest
+
+    resp = _option_data_client().get_option_latest_quote(
+        OptionLatestQuoteRequest(symbol_or_symbols=[short_symbol, long_symbol], feed="indicative")
+    )
+    short_q, long_q = resp.get(short_symbol), resp.get(long_symbol)
+    if not short_q or not long_q:
+        return None
+
+    def _mid(q):
+        if q.bid_price is None or q.ask_price is None:
+            return None
+        return (q.bid_price + q.ask_price) / 2
+
+    sm, lm = _mid(short_q), _mid(long_q)
+    if sm is None or lm is None:
+        return None
+    return round(max(0.0, sm - lm), 4)
+
+
+def _build_mleg_close_args(short_symbol: str, long_symbol: str, contracts: int, limit_price: float) -> list[str]:
+    """Reverse of an open: buy back the short leg, sell the long leg."""
+    if contracts < 1:
+        raise ValueError("contracts must be >= 1")
+    legs = [
+        {"symbol": short_symbol, "ratio_qty": "1", "side": "buy", "position_intent": "buy_to_close"},
+        {"symbol": long_symbol, "ratio_qty": "1", "side": "sell", "position_intent": "sell_to_close"},
+    ]
+    return [
+        ALPACA_CLI, "order", "submit",
+        "--order-class", "mleg",
+        "--qty", str(contracts),
+        "--type", "limit",
+        "--limit-price", f"{max(0.01, limit_price):.2f}",
+        "--time-in-force", "day",
+        "--legs", json.dumps(legs),
+    ]
+
+
+def close_spread(short_symbol: str, long_symbol: str, contracts: int, limit_price: float) -> dict:
+    """Close a spread by submitting the reverse multi-leg order via the CLI."""
+    argv = _build_mleg_close_args(short_symbol, long_symbol, contracts, limit_price)
+    logger.info("close_spread %s/%s x%d @ %.2f", short_symbol, long_symbol, contracts, limit_price)
+    proc = subprocess.run(argv, env=_cli_env(), capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        raise RuntimeError(f"alpaca CLI close failed ({proc.returncode}): {proc.stderr.strip()[:300]}")
+    return json.loads(proc.stdout)
+
+
 def _cli_env() -> dict:
     s = get_settings()
     env = dict(os.environ)
