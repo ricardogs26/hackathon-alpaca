@@ -87,15 +87,15 @@ def _messages(context: dict) -> list[dict]:
     ]
 
 
-def _propose_ollama_native(s, context: dict) -> str:
+def _call_ollama_native(base_url: str, model: str, timeout: int, context: dict) -> str:
     """Ollama native /api/chat with think=false (its OpenAI endpoint ignores it)."""
     import httpx
 
-    host = s.llm_base_url.rstrip("/").removesuffix("/v1")
+    host = base_url.rstrip("/").removesuffix("/v1")
     resp = httpx.post(
         f"{host}/api/chat",
         json={
-            "model": s.llm_model,
+            "model": model,
             "think": False,
             "format": "json",
             "stream": False,
@@ -103,22 +103,21 @@ def _propose_ollama_native(s, context: dict) -> str:
             "options": {"temperature": 0.2, "num_predict": 150},
             "messages": _messages(context),
         },
-        timeout=s.llm_timeout_seconds,
+        timeout=timeout,
     )
     resp.raise_for_status()
     return resp.json().get("message", {}).get("content", "") or ""
 
 
-def _propose_openai(s, context: dict) -> str:
+def _call_openai(base_url: str, model: str, api_key: str, timeout: int, context: dict) -> str:
     """OpenAI-compatible path for Featherless / real OpenAI / other hosts."""
     from openai import OpenAI
 
-    # max_retries=0: a slow call fails once and safe-abstains, instead of the
-    # client silently retrying and tripling the wall time.
-    client = OpenAI(base_url=s.llm_base_url, api_key=s.llm_api_key,
-                    timeout=s.llm_timeout_seconds, max_retries=0)
+    # max_retries=0: a slow call fails once, instead of the client silently
+    # retrying and tripling the wall time.
+    client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=0)
     resp = client.chat.completions.create(
-        model=s.llm_model,
+        model=model,
         messages=_messages(context),
         temperature=0.2,
         max_tokens=150,
@@ -127,19 +126,47 @@ def _propose_openai(s, context: dict) -> str:
     return resp.choices[0].message.content or ""
 
 
+def _call_primary(s, context: dict) -> str:
+    if s.llm_native_ollama:
+        return _call_ollama_native(s.llm_base_url, s.llm_model, s.llm_timeout_seconds, context)
+    return _call_openai(s.llm_base_url, s.llm_model, s.llm_api_key, s.llm_timeout_seconds, context)
+
+
+def _call_fallback(s, context: dict) -> str:
+    # The fallback is always a local Ollama (native), so a Featherless/OpenAI
+    # outage degrades to the on-GPU model instead of an all-day abstain.
+    return _call_ollama_native(s.llm_fallback_base_url, s.llm_fallback_model, s.llm_timeout_seconds, context)
+
+
 def propose(context: dict) -> Proposal:
-    """Ask the LLM for a direction. Any failure returns ABSTAIN."""
+    """
+    Ask the LLM for a direction. Tries the primary endpoint (e.g. Featherless),
+    then a local-Ollama fallback if the primary errors or returns empty. Only if
+    both fail does it abstain — never a fabricated trade.
+    """
     import time
 
     from optionwright import metrics
 
     s = get_settings()
     t0 = time.time()
+
+    raw = ""
     try:
-        raw = _propose_ollama_native(s, context) if s.llm_native_ollama else _propose_openai(s, context)
-    except Exception as exc:  # network, timeout, bad endpoint — all safe-abstain
-        logger.warning("analyzer LLM call failed: %s", exc)
+        raw = _call_primary(s, context)
+    except Exception as exc:
+        logger.warning("primary LLM failed: %s", exc)
         metrics.ERRORS.labels(where="llm").inc()
+
+    if not raw and s.llm_fallback_base_url:
+        try:
+            raw = _call_fallback(s, context)
+            logger.info("used LLM fallback")
+        except Exception as exc:
+            logger.warning("fallback LLM failed: %s", exc)
+            metrics.ERRORS.labels(where="llm_fallback").inc()
+
+    if not raw:
         return _ABSTAIN
     proposal = _parse_proposal(raw)
     metrics.record_llm(time.time() - t0, proposal.confidence)

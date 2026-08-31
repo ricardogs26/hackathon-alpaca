@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # the NATIVE /api/chat (think=false -> ~0.6s). Set false to use the plain
     # OpenAI-compatible path for Featherless / real OpenAI / other hosts.
     llm_native_ollama: bool = Field(default=True, alias="LLM_NATIVE_OLLAMA")
+    # Optional fallback: a local Ollama used only if the primary endpoint (e.g.
+    # Featherless) fails or returns empty. Empty base_url disables the fallback.
+    llm_fallback_base_url: str = Field(default="", alias="FALLBACK_LLM_BASE_URL")
+    llm_fallback_model: str = Field(default="qwen3.5:9b", alias="FALLBACK_LLM_MODEL")
 
     # ── Datastores ────────────────────────────────────────────────────────────
     postgres_host: str = Field(default="postgres", alias="POSTGRES_HOST")
