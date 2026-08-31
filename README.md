@@ -1,109 +1,148 @@
 # optionwright
 
-**An autonomous options-trading agent for Alpaca where an LLM proposes and
-deterministic code decides.** The model may pick a direction — bullish, bearish,
-or *abstain* — but every strike, contract count, position size, and exit is
-computed and vetoed in code. Losses are bounded by construction: the agent only
-trades **defined-risk vertical spreads**, so the maximum loss of any position is
-fixed the moment it opens.
+**An autonomous options-trading agent for Alpaca where the LLM proposes and
+deterministic code decides.** The model picks a direction (bullish, bearish, or
+abstain) and nothing else. Every strike, contract count, position size, and exit
+is computed and vetoed in code. The agent trades defined-risk vertical spreads
+only, so the maximum loss of any position is fixed the moment it opens. Nothing
+the model returns can increase risk.
 
 Built for the [Alpaca AI Trading Agents Hackathon](https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon)
-(lablab.ai × Alpaca, Aug–Sep 2026). Runs entirely against Alpaca's **paper
-trading** environment — no real capital.
+(lablab.ai × Alpaca, 2026). Paper trading only, no real capital.
 
-> This is a hackathon project for educational purposes. It is not investment
-> advice and must not be pointed at a live-money account.
+| | |
+|---|---|
+| **Live dashboard** | https://optionwright.richardx.dev |
+| **Strategy write-up** | [`docs/writeup.md`](docs/writeup.md) |
+| **Metrics** | `/metrics` (Prometheus) |
+| **License** | MIT |
+
+> Educational hackathon project. Not investment advice. Must not be pointed at a
+> live-money account.
 
 ---
 
-## The idea in one paragraph
+## Why split the model from the code
 
-An LLM is good at reading context and bad at arithmetic and discipline. So the
-agent splits the two. Each cycle, deterministic code reads the option chain,
-filters for liquidity, and pre-computes the candidate spreads and every
-comparison the decision depends on. The LLM sees that pre-digested context and
-returns only a **direction or an abstention** with a confidence. Code then picks
-the strikes, sizes the position to a fixed max-loss budget, runs it through an
-ordered set of **risk gates** that can only ever shrink or veto the trade, and
-executes multi-leg orders through the **Alpaca CLI**. Nothing the LLM says can
-increase risk.
+An LLM reads context well and handles arithmetic and discipline badly, so the
+agent takes those two jobs away from it. Each cycle, deterministic code reads the
+option chain, filters for liquidity, and pre-builds the candidate spreads with
+every number already computed. The model sees that pre-digested context and
+returns a direction with a confidence. Code picks the strikes, sizes the position
+to a max-loss budget, runs it through the risk gates, and executes. The model
+gets to have an opinion; it never decides how much money is on the line.
 
 ## Strategy: defined-risk vertical spreads
 
-- **Bull put spread** when the model is bullish, **bear call spread** when
-  bearish — both credit spreads with a capped max loss (`width − credit`).
-- Underlyings limited to the most liquid weekly options (SPY, QQQ) — the short
-  whitelist *is* a risk gate, not a limitation.
-- Strikes chosen by delta; expiries near-weekly; positions closed at a
-  take-profit fraction of the credit, a stop multiple, or forced flat before
-  expiration.
+- A **bull put spread** when the model reads bullish, a **bear call spread** when
+  bearish. Both are credit spreads with a capped max loss of `width − credit`.
+- Underlyings are limited to the most liquid weekly options (SPY, QQQ). That
+  short whitelist is a risk gate, not a limitation.
+- Strikes are chosen by delta, expiries near-weekly. Positions close at a
+  take-profit fraction of the credit, a stop multiple, or flat before expiration.
 
-## Risk gates (code, not prompt)
+## Risk gates
 
-Evaluated in order; any gate can veto or shrink, none can enlarge:
+Seven gates run in order before any order. Each can veto or shrink a trade, none
+can enlarge one. Position size is not a fixed constant or a model output: it
+emerges from the gates. The request enters at a ceiling and the max-loss and
+daily-budget gates shrink it to fit.
 
 | Gate | Rule |
 |------|------|
-| Max loss per position | ≤ a fixed % of equity |
-| Open positions cap | No more than N concurrent spreads |
-| Daily premium budget | Capital-at-risk deployed per day is bounded |
-| Per-underlying cooldown | No re-entry on the same symbol within a window |
-| Consecutive-loss breaker | N losing trades in a row → pause |
+| Consecutive-loss breaker | N losing trades in a row pauses trading |
+| Open-positions cap | No more than N concurrent spreads |
+| Per-underlying cooldown | No re-entry on a symbol within a window |
 | Opening blackout | No trades in the first minutes after the open |
 | Macro blackout | No new trades near FOMC / CPI / NFP prints |
+| Max loss per position | At most a fixed % of equity |
+| Daily premium budget | Capital-at-risk per day is bounded |
 
 ## Architecture
 
 ```
-              ┌──────────── every cycle (market hours) ────────────┐
-   chain  →   filter liquidity  →  build candidate spreads  →  LLM: direction/abstain
-              │                                                     │
-              └──── code: pick strikes → size to max-loss → risk gates → CLI execute
-                                                                     │
-                     Postgres (orders/legs, equity, decisions)  ·  Prometheus  ·  dashboard
+              every cycle (market hours)
+  chain  ->  filter liquidity  ->  build candidate spreads  ->  LLM: direction / abstain
+             |                                                   |
+             +---- code: pick strikes -> size to max-loss -> risk gates -> Alpaca CLI
+                                                                 |
+              Postgres (orders/legs, equity, decisions)  .  Prometheus  .  dashboard
 ```
 
-- **LLM backend is OpenAI-compatible** — point `LLM_BASE_URL` at any endpoint
-  (a local Ollama, Featherless, etc.). The model never does math.
-- **Execution via the Alpaca CLI** (structured JSON, built for long-running
-  agents). An MCP server integration is available for conversational demos.
+## The model
+
+- The analyzer's only output is `{direction, confidence, rationale}`. It never
+  does arithmetic and never sizes a trade.
+- It talks to any **OpenAI-compatible** endpoint. The deployed agent runs
+  **Qwen 72B via Featherless** as the primary model, with a **local Ollama
+  (qwen3.5:9b) as an automatic fallback**: if the primary fails or returns empty,
+  the agent decides with the local model instead of standing down.
+- **Fail-closed**: a timeout, a malformed response, an unknown direction, or an
+  out-of-range confidence all collapse to *abstain*, never a fabricated trade.
+
+## Alpaca integration
+
+- **Trading API + `alpaca-py`** for the option chain, quotes, greeks, and account.
+- **Alpaca CLI** for execution: each spread is one `mleg` order, the short leg
+  `sell_to_open` and the long leg `buy_to_open`.
+- **MCP server** for the conversational demo.
+- Paper trading only. The agent refuses to start against a live account.
 
 ## Quickstart (judges: no Kubernetes required)
 
 ```bash
-cp .env.example .env        # fill in your Alpaca paper keys + an LLM endpoint
-docker compose up           # brings up the agent + Postgres + Redis
+cp .env.example .env     # fill in Alpaca paper keys + an LLM endpoint
+docker compose up        # agent + Postgres + Redis
 # dashboard on http://localhost:8080
 ```
 
-See [`docs/writeup.md`](docs/writeup.md) for the one-page write-up (AI logic,
-risk gates, Alpaca infrastructure).
+## Configuration
 
-## Layout
+Set these in `.env` (see [`.env.example`](.env.example)):
+
+| Variable | What it does |
+|----------|--------------|
+| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | Paper account keys (a new $100k account) |
+| `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | Primary LLM (e.g. Featherless, OpenAI, a local Ollama) |
+| `LLM_NATIVE_OLLAMA` | `true` to use the native Ollama API, `false` for OpenAI-compatible |
+| `FALLBACK_LLM_BASE_URL` / `FALLBACK_LLM_MODEL` | Optional local fallback model |
+| `UNDERLYINGS` | Comma-separated tickers (default `SPY,QQQ`) |
+| `CYCLE_SECONDS` | How often the agent evaluates the market |
+
+## Project layout
 
 ```
 optionwright/
-  options/    chain reading, liquidity filter, spread construction  (pure, tested)
-  policy/     risk gates + tunable rules registry
-  agent/      the cycle loop + the LLM analyzer (proposes only)
+  options/    chain models + deterministic spread selection   (pure, tested)
+  policy/     the seven risk gates                             (pure, tested)
+  agent/      the cycle loop, the LLM analyzer, the runner
   broker/     Alpaca chain data + multi-leg execution via CLI
-  storage/    Postgres schema: orders, legs, equity curve, decisions
-  api/        FastAPI: read-only status + the dashboard (the demo URL)
-tests/        deterministic tests for the options + policy layers
+  storage/    Postgres schema + reads (orders, equity, decisions)
+  api/        FastAPI: read-only endpoints + the dashboard
+tests/        54 tests over the deterministic core
+scripts/      account, chain, and dry-run probes
+k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
 
-## Status
+## Observability
 
-Core complete and deployed. The full pipeline is built and tested end to end
-(56 tests): chain reading, spread selection, the seven risk gates, the LLM
-analyzer, multi-leg execution through the Alpaca CLI, Postgres persistence, and
-Prometheus metrics. The agent runs on a schedule, skipping cycles while the
-market is closed, and trades live from the first market open of the hackathon.
+- **Prometheus** metrics at `/metrics`: cycle outcomes, decisions by direction,
+  LLM confidence and latency, positions opened, realized P&L, equity.
+- **Dashboard** at `/`: equity curve, open and closed spreads, and the decision
+  log (the reason and gate verdict behind every cycle).
+- **Grafana** dashboard under [`k8s/grafana`](k8s/grafana).
 
-- **Demo**: `optionwright.richardx.dev` (read-only status + metrics)
-- **Strategy write-up**: [`docs/writeup.md`](docs/writeup.md)
-- **Metrics**: `/metrics` (Prometheus), scraped into Grafana
+## Tests
+
+```bash
+pip install -r requirements.txt
+pytest -q          # 54 tests, no network or account needed
+```
+
+The deterministic core (spread selection, risk gates, the multi-leg order
+builder, the LLM response parser, and the full pipeline) is tested against
+synthetic data with no live services.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
