@@ -59,10 +59,17 @@ OPEN_POSITIONS = Gauge(
 )
 
 
+REALIZED_PNL_NET = Gauge(
+    "optionwright_realized_pnl_net_usd",
+    "Net realized P&L from Postgres (authoritative; immune to counter double-counts)",
+)
+
+
 def set_position_gauges(positions: list) -> None:
     """positions: rows from store.get_positions (each a dict with 'status')."""
     POSITIONS_TOTAL.set(len(positions))
     OPEN_POSITIONS.set(sum(1 for p in positions if p.get("status") == "open"))
+    REALIZED_PNL_NET.set(sum(p.get("realized_pnl") or 0 for p in positions if p.get("status") == "closed"))
 
 
 # Per-open-position live evaluation, rendered as a Grafana table. The value is

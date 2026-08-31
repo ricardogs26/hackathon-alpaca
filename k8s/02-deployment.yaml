@@ -6,7 +6,9 @@ metadata:
   labels:
     app: optionwright
 spec:
-  replicas: 1                     # single replica: one scheduler, no double cycles
+  replicas: 1
+  strategy:
+    type: Recreate   # 1 solo pod: el scheduler nunca corre duplicado (evita doble cierre/doble conteo)                     # single replica: one scheduler, no double cycles
   selector:
     matchLabels:
       app: optionwright

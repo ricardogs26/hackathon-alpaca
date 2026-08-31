@@ -17,7 +17,7 @@ data:
       ],
       "timezone": "",
       "schemaVersion": 39,
-      "version": 5,
+      "version": 6,
       "refresh": "30s",
       "time": {
         "from": "now-6h",
@@ -82,7 +82,7 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "(sum(optionwright_realized_pnl_usd_total{result=\"gain\"}) or vector(0)) - (sum(optionwright_realized_pnl_usd_total{result=\"loss\"}) or vector(0))",
+              "expr": "max(optionwright_realized_pnl_net_usd)",
               "datasource": null,
               "refId": "A"
             }
