@@ -33,12 +33,20 @@ spec:
             - name: ALPACA_PAPER
               value: "true"
             # LLM — the shared cluster Ollama (qwen3.5:9b), native path for think=false
+            # LLM — primary: Featherless (Qwen 72B, OpenAI-compatible).
+            # Fallback: the shared cluster Ollama (qwen3.5:9b) if Featherless fails.
             - name: LLM_BASE_URL
-              value: "http://ollama-service.amael-ia:11434/v1"
+              value: "https://api.featherless.ai/v1"
             - name: LLM_MODEL
-              value: "qwen3.5:9b"
+              value: "Qwen/Qwen2.5-72B-Instruct"
             - name: LLM_NATIVE_OLLAMA
-              value: "true"
+              value: "false"
+            - name: LLM_API_KEY
+              valueFrom: { secretKeyRef: { name: optionwright-secrets, key: LLM_API_KEY } }
+            - name: FALLBACK_LLM_BASE_URL
+              value: "http://ollama-service.amael-ia:11434/v1"
+            - name: FALLBACK_LLM_MODEL
+              value: "qwen3.5:9b"
             # Postgres — shared instance in amael-ia, dedicated DB "hackathon"
             - name: POSTGRES_HOST
               value: "postgres-service.amael-ia"
