@@ -75,7 +75,9 @@ def manage_positions() -> list[dict]:
     today = date.today().isoformat()
     results = []
 
-    for pos in store.get_positions(200):
+    all_positions = store.get_positions(200)
+    metrics.set_position_gauges(all_positions)
+    for pos in all_positions:
         if pos["status"] != "open":
             continue
         try:

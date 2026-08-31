@@ -29,8 +29,9 @@ async def lifespan(app: FastAPI):
     s = get_settings()
     try:
         store.init_schema()
+        metrics.set_position_gauges(store.get_positions(200))  # correct at rest, before any cycle
     except Exception as exc:  # DB may still be starting; scheduler retries anyway
-        logger.warning("init_schema deferred: %s", exc)
+        logger.warning("startup DB step deferred: %s", exc)
 
     global _scheduler
     _scheduler = BackgroundScheduler(timezone="UTC")

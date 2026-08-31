@@ -17,7 +17,7 @@ data:
       ],
       "timezone": "",
       "schemaVersion": 39,
-      "version": 2,
+      "version": 3,
       "refresh": "30s",
       "time": {
         "from": "now-6h",
@@ -122,7 +122,7 @@ data:
         },
         {
           "id": 3,
-          "title": "Spreads opened",
+          "title": "Spreads opened (total)",
           "type": "stat",
           "gridPos": {
             "x": 12,
@@ -133,7 +133,7 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "sum(optionwright_positions_opened_total) or vector(0)",
+              "expr": "max(optionwright_positions_total)",
               "datasource": null,
               "refId": "A"
             }

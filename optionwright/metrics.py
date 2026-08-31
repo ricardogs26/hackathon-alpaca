@@ -48,6 +48,21 @@ EQUITY = Gauge(
     "optionwright_equity_usd",
     "Account equity at the last cycle",
 )
+# Gauges sourced from Postgres (survive pod restarts, unlike the counters above).
+POSITIONS_TOTAL = Gauge(
+    "optionwright_positions_total",
+    "All spreads ever opened (from Postgres)",
+)
+OPEN_POSITIONS = Gauge(
+    "optionwright_open_positions",
+    "Currently open spreads (from Postgres)",
+)
+
+
+def set_position_gauges(positions: list) -> None:
+    """positions: rows from store.get_positions (each a dict with 'status')."""
+    POSITIONS_TOTAL.set(len(positions))
+    OPEN_POSITIONS.set(sum(1 for p in positions if p.get("status") == "open"))
 ERRORS = Counter(
     "optionwright_errors_total",
     "Errors during a cycle",
