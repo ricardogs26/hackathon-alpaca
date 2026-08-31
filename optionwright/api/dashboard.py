@@ -61,6 +61,10 @@ DASHBOARD_HTML = r"""<!doctype html>
   .d .rs{color:var(--ink2);font-size:.86rem}
   .d .rs b{color:var(--ink)}
   .muted{color:var(--ink3);font-size:.86rem;padding:14px 0}
+  .fbtn{font:500 .72rem/1 var(--mono);color:var(--ink2);background:var(--raise);border:1px solid var(--line);
+    border-radius:7px;padding:6px 11px;margin-left:4px;cursor:pointer}
+  .fbtn:hover{border-color:var(--acc);color:var(--acc)}
+  .fbtn.on{background:var(--acc);border-color:var(--acc);color:#0e1613}
   .foot{margin-top:26px;color:var(--ink3);font-size:.78rem;text-align:center;font-family:var(--mono)}
   a{color:var(--acc)}
 </style>
@@ -91,8 +95,18 @@ DASHBOARD_HTML = r"""<!doctype html>
       <div id="positions"><div class="muted">No positions yet.</div></div>
     </div>
     <div class="card wide">
-      <h2>Decision log — why each cycle acted</h2>
-      <div class="feed" id="decisions"><div class="muted">Waiting for the first cycle…</div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <h2 style="margin:0">Decision log — why each cycle acted</h2>
+        <div id="decfilters">
+          <button class="fbtn on" data-f="all">All</button>
+          <button class="fbtn" data-f="opened">Opened</button>
+          <button class="fbtn" data-f="vetoed">Vetoed</button>
+          <button class="fbtn" data-f="abstain">Abstain</button>
+          <button class="fbtn" data-f="SPY">SPY</button>
+          <button class="fbtn" data-f="QQQ">QQQ</button>
+        </div>
+      </div>
+      <div class="feed" id="decisions" style="margin-top:12px"><div class="muted">Waiting for the first cycle…</div></div>
     </div>
   </div>
   <div class="foot">optionwright · paper trading · auto-refresh 15s · <a href="/metrics">/metrics</a></div>
@@ -169,16 +183,37 @@ async function refresh(){
                `<td class="${pnlc}">${pnl==null?'—':money(pnl)}</td></tr>`;
       }).join('')+'</table></div>';
   }
-  const dec = await j('/api/decisions?limit=30') || [];
-  if(dec.length){
-    $('decisions').innerHTML = dec.map(d=>
-      `<div class="d"><span class="tm">${d.ts.slice(5,16).replace('T',' ')}</span>`+
-      `<span class="rs">${dirTag(d.direction)} <b>${d.underlying}</b> — ${d.reason||d.rationale||''}`+
-      `${d.approved?` · opened ${d.contracts}x`:''}</span>`+
-      `<span class="tm">${d.confidence!=null?'conf '+Number(d.confidence).toFixed(2):''}</span></div>`
-    ).join('');
-  }
+  _decisions = await j('/api/decisions?limit=100') || [];
+  renderDecisions();
 }
+
+let _decisions = [];
+let _decFilter = 'all';
+function matchFilter(d){
+  if(_decFilter==='all') return true;
+  if(_decFilter==='SPY'||_decFilter==='QQQ') return d.underlying===_decFilter;
+  if(_decFilter==='opened') return d.approved;
+  if(_decFilter==='vetoed') return !d.approved && d.direction!=='abstain';
+  if(_decFilter==='abstain') return d.direction==='abstain';
+  return true;
+}
+function renderDecisions(){
+  const rows = _decisions.filter(matchFilter);
+  const el = $('decisions');
+  if(!rows.length){ el.innerHTML = '<div class="muted">No decisions match this filter.</div>'; return; }
+  el.innerHTML = rows.map(d=>
+    `<div class="d"><span class="tm">${d.ts.slice(5,16).replace('T',' ')}</span>`+
+    `<span class="rs">${dirTag(d.direction)} <b>${d.underlying}</b> — ${d.reason||d.rationale||''}`+
+    `${d.approved?` · opened ${d.contracts}x`:''}</span>`+
+    `<span class="tm">${d.confidence!=null?'conf '+Number(d.confidence).toFixed(2):''}</span></div>`
+  ).join('');
+}
+document.getElementById('decfilters').addEventListener('click', e=>{
+  const b = e.target.closest('.fbtn'); if(!b) return;
+  _decFilter = b.dataset.f;
+  document.querySelectorAll('#decfilters .fbtn').forEach(x=>x.classList.toggle('on', x===b));
+  renderDecisions();
+});
 refresh(); setInterval(refresh, 15000);
 </script>
 </body>
