@@ -6,6 +6,14 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Backstop against a flood reaching the shared node/DB. Behind the Cloudflare
+    # tunnel nginx sees one source IP, so this acts as a generous GLOBAL cap:
+    # a normal dashboard (a few viewers polling every 15s) never hits it, a flood
+    # does. Cloudflare is the real per-attacker DDoS layer at the edge.
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/limit-connections: "100"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
 spec:
   tls:
     - hosts:

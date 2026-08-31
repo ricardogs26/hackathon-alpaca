@@ -73,25 +73,47 @@ def status() -> dict:
     }
 
 
+# Short TTL cache so a flood of dashboard requests hits memory, not the shared
+# Postgres. The dashboard polls every 15s, so 10s of staleness is invisible, and
+# a burst of thousands of requests still touches the DB at most once per window.
+import time as _time
+
+_cache: dict[str, tuple[float, object]] = {}
+_CACHE_TTL = 10.0
+
+
+def _cached(key: str, fn):
+    now = _time.time()
+    hit = _cache.get(key)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+    val = fn()
+    _cache[key] = (now, val)
+    return val
+
+
 @app.get("/api/equity")
 def equity(limit: int = 500) -> list[dict]:
     from optionwright.storage import store
 
-    return store.get_equity_curve(limit)
+    limit = max(1, min(limit, 1000))
+    return _cached(f"equity:{limit}", lambda: store.get_equity_curve(limit))
 
 
 @app.get("/api/positions")
 def positions(limit: int = 50) -> list[dict]:
     from optionwright.storage import store
 
-    return store.get_positions(limit)
+    limit = max(1, min(limit, 200))
+    return _cached(f"positions:{limit}", lambda: store.get_positions(limit))
 
 
 @app.get("/api/decisions")
 def decisions(limit: int = 30) -> list[dict]:
     from optionwright.storage import store
 
-    return store.get_decisions(limit)
+    limit = max(1, min(limit, 100))
+    return _cached(f"decisions:{limit}", lambda: store.get_decisions(limit))
 
 
 @app.get("/", response_class=None)
