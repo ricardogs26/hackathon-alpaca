@@ -42,12 +42,25 @@ def _call_chain() -> list[OptionQuote]:
 def test_liquidity_gate_rejects_thin_and_wide():
     good = _q(Right.PUT, 635, -0.28, bid=2.5, ask=2.6, oi=5000, vol=500)
     thin_oi = _q(Right.PUT, 635, -0.28, bid=2.5, ask=2.6, oi=10, vol=500)
-    thin_vol = _q(Right.PUT, 635, -0.28, bid=2.5, ask=2.6, oi=5000, vol=1)
+    # low OI (below bypass) AND low volume -> genuinely illiquid, rejected
+    thin_both = _q(Right.PUT, 635, -0.28, bid=2.5, ask=2.6, oi=300, vol=1)
     wide = _q(Right.PUT, 635, -0.28, bid=1.0, ask=3.0, oi=5000, vol=500)
     assert is_liquid(good)
     assert not is_liquid(thin_oi)
-    assert not is_liquid(thin_vol)
+    assert not is_liquid(thin_both)
     assert not is_liquid(wide)
+
+
+def test_deep_oi_bypasses_zero_volume():
+    # off-hours / at the open: deep open interest, zero intraday volume -> liquid
+    q = _q(Right.PUT, 635, -0.28, bid=2.5, ask=2.6, oi=5000, vol=0)
+    assert is_liquid(q)
+
+
+def test_low_oi_with_volume_is_liquid():
+    # a thin strike that is actually trading today still qualifies
+    q = _q(Right.PUT, 635, -0.28, bid=2.5, ask=2.6, oi=200, vol=50)
+    assert is_liquid(q)
 
 
 def test_bullish_builds_bull_put_spread():

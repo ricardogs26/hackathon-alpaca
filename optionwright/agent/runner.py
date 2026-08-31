@@ -27,13 +27,40 @@ def _market_open() -> bool:
     return bool(clock.is_open)
 
 
+def _minutes_since_open() -> float | None:
+    """
+    Minutes since today's session open, or None if the market is closed or the
+    calendar can't be read. None leaves the opening-blackout gate inert (safe
+    degradation), so a calendar hiccup never blocks or forces a trade.
+    """
+    try:
+        from datetime import date
+
+        from alpaca.trading.requests import GetCalendarRequest
+
+        tc = alpaca._trading_client()
+        clock = tc.get_clock()
+        if not clock.is_open:
+            return None
+        today = date.today()
+        cal = tc.get_calendar(GetCalendarRequest(start=today, end=today))
+        if not cal:
+            return None
+        open_dt = cal[0].open  # tz-aware session open
+        now = clock.timestamp   # tz-aware current market time
+        return max(0.0, (now - open_dt).total_seconds() / 60.0)
+    except Exception as exc:  # never let the clock/calendar break a cycle
+        logger.warning("minutes_since_open unavailable: %s", exc)
+        return None
+
+
 def _build_deps() -> Deps:
     return Deps(
         account=_account,
         nearest_expiry=lambda u: alpaca.nearest_expiry(u, min_days=1, max_days=10),
         fetch_chain=alpaca.fetch_chain,
         propose=propose,
-        build_state=lambda u, eq: store.build_policy_state(u, eq),
+        build_state=lambda u, eq: store.build_policy_state(u, eq, minutes_since_open=_minutes_since_open()),
         submit_spread=alpaca.submit_spread,
         record_decision=store.record_decision,
         record_position=store.record_position,

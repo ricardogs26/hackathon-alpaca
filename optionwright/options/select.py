@@ -17,20 +17,23 @@ from optionwright.options.models import (
 )
 
 # ── Liquidity gate ────────────────────────────────────────────────────────────
-# A contract must clear all three to be tradable. These are the first line of
-# defense: an illiquid leg means slippage we can't model and can't exit.
+# Open interest and a tight bid-ask are the hard signals: an illiquid leg means
+# slippage we can't model and can't exit. Daily VOLUME is only a soft signal —
+# it is 0 off-hours and near-0 in the first minutes after the open, so a contract
+# with deep open interest (an established, actively-traded strike) clears the gate
+# even before intraday volume builds. A thin contract still needs volume to prove
+# it actually trades.
 MIN_OPEN_INTEREST = 100
 MIN_VOLUME = 10
-MAX_SPREAD_PCT = 0.15   # bid-ask no wider than 15% of mid
+OI_VOLUME_BYPASS = 500   # OI this deep proves liquidity without intraday volume
+MAX_SPREAD_PCT = 0.15    # bid-ask no wider than 15% of mid
 
 
 def is_liquid(q: OptionQuote) -> bool:
-    return (
-        q.open_interest >= MIN_OPEN_INTEREST
-        and q.volume >= MIN_VOLUME
-        and q.mid > 0
-        and q.spread_pct <= MAX_SPREAD_PCT
-    )
+    if q.mid <= 0 or q.open_interest < MIN_OPEN_INTEREST or q.spread_pct > MAX_SPREAD_PCT:
+        return False
+    # volume is a soft signal; deep open interest bypasses it
+    return q.volume >= MIN_VOLUME or q.open_interest >= OI_VOLUME_BYPASS
 
 
 def liquid_contracts(chain: list[OptionQuote], right: Right, expiry: str) -> list[OptionQuote]:
