@@ -1,0 +1,387 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: optionwright-dashboard
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  optionwright-dashboard.json: |
+    {
+      "uid": "optionwright",
+      "title": "optionwright \u2014 Trading Agent",
+      "tags": [
+        "optionwright",
+        "hackathon",
+        "alpaca"
+      ],
+      "timezone": "",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "templating": {
+        "list": []
+      },
+      "annotations": {
+        "list": []
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Equity",
+          "type": "stat",
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 6,
+            "h": 5
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "optionwright_equity_usd",
+              "datasource": null,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD",
+              "decimals": 0,
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "text"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "none",
+            "textMode": "value"
+          }
+        },
+        {
+          "id": 2,
+          "title": "Realized P&L (net)",
+          "type": "stat",
+          "gridPos": {
+            "x": 6,
+            "y": 0,
+            "w": 6,
+            "h": 5
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "sum(optionwright_realized_pnl_usd_total{result=\"gain\"}) - sum(optionwright_realized_pnl_usd_total{result=\"loss\"})",
+              "datasource": null,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "value",
+            "textMode": "value"
+          }
+        },
+        {
+          "id": 3,
+          "title": "Spreads opened",
+          "type": "stat",
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 6,
+            "h": 5
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "sum(optionwright_positions_opened_total)",
+              "datasource": null,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "none"
+          }
+        },
+        {
+          "id": 4,
+          "title": "Cycle errors",
+          "type": "stat",
+          "gridPos": {
+            "x": 18,
+            "y": 0,
+            "w": 6,
+            "h": 5
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "sum(optionwright_errors_total)",
+              "datasource": null,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background"
+          }
+        },
+        {
+          "id": 5,
+          "title": "Account equity",
+          "type": "timeseries",
+          "gridPos": {
+            "x": 0,
+            "y": 5,
+            "w": 16,
+            "h": 8
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "optionwright_equity_usd",
+              "datasource": null,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD",
+              "custom": {
+                "fillOpacity": 12,
+                "lineWidth": 2,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 6,
+          "title": "LLM confidence (last)",
+          "type": "gauge",
+          "gridPos": {
+            "x": 16,
+            "y": 5,
+            "w": 8,
+            "h": 4
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "optionwright_llm_confidence",
+              "datasource": null,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "max": 1,
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.65
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 7,
+          "title": "LLM latency p90",
+          "type": "stat",
+          "gridPos": {
+            "x": 16,
+            "y": 9,
+            "w": 8,
+            "h": 4
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.90, sum by (le) (rate(optionwright_llm_latency_seconds_bucket[10m])))",
+              "datasource": null,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "none"
+          }
+        },
+        {
+          "id": 8,
+          "title": "Cycles by result (10m rate)",
+          "type": "timeseries",
+          "gridPos": {
+            "x": 0,
+            "y": 13,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "sum by (result) (rate(optionwright_cycles_total[10m]))",
+              "datasource": null,
+              "refId": "A",
+              "legendFormat": "{{result}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "fillOpacity": 18,
+                "stacking": {
+                  "mode": "normal"
+                },
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 9,
+          "title": "Decisions by direction",
+          "type": "piechart",
+          "gridPos": {
+            "x": 12,
+            "y": 13,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": null,
+          "targets": [
+            {
+              "expr": "sum by (direction) (optionwright_decisions_total)",
+              "datasource": null,
+              "refId": "A",
+              "legendFormat": "{{direction}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "values": [
+                "value"
+              ]
+            },
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          }
+        }
+      ]
+    }
