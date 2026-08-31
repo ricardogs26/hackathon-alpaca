@@ -90,3 +90,14 @@ def test_never_enlarges_beyond_request():
 def test_custom_ruleset_respected():
     rules = RuleSet(max_open_positions=1)
     assert evaluate(_spread(), 1, _state(open_positions=1), rules).approved is False
+
+
+def test_per_underlying_cap_vetoes():
+    # global cap not hit (2 of 5), but 2 already on this symbol -> veto
+    v = evaluate(_spread(), 1, _state(open_positions=2, open_positions_underlying=2))
+    assert not v.approved and "per-underlying" in v.reason
+
+
+def test_per_underlying_below_cap_ok():
+    v = evaluate(_spread(), 1, _state(open_positions=2, open_positions_underlying=1))
+    assert v.approved

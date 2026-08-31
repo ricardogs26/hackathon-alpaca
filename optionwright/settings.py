@@ -52,8 +52,9 @@ class Settings(BaseSettings):
     expiry_max_days: int = Field(default=7, alias="EXPIRY_MAX_DAYS")
     # Risk gates (deployment increases capital-at-risk moderately for the contest)
     max_open_positions: int = Field(default=5, alias="MAX_OPEN_POSITIONS")
+    max_per_underlying: int = Field(default=2, alias="MAX_PER_UNDERLYING")  # anti-concentration
     max_loss_pct: float = Field(default=0.015, alias="MAX_LOSS_PCT")
-    cooldown_seconds: float = Field(default=1800.0, alias="COOLDOWN_SECONDS")  # 30 min
+    cooldown_seconds: float = Field(default=2700.0, alias="COOLDOWN_SECONDS")  # 45 min
     daily_budget_pct: float = Field(default=0.10, alias="DAILY_BUDGET_PCT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 

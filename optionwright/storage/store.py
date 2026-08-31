@@ -155,6 +155,9 @@ def build_policy_state(
     """Read the live risk state for one underlying from Postgres."""
     with _conn() as c:
         open_positions = c.execute("SELECT count(*) FROM positions WHERE status='open'").fetchone()[0]
+        open_underlying = c.execute(
+            "SELECT count(*) FROM positions WHERE status='open' AND underlying=%s", (underlying,)
+        ).fetchone()[0]
         at_risk = c.execute(
             "SELECT coalesce(sum(max_loss),0) FROM positions WHERE status='open' AND ts_open::date = now()::date"
         ).fetchone()[0]
@@ -170,6 +173,7 @@ def build_policy_state(
         open_positions=int(open_positions),
         consecutive_losses=_consecutive_losses([p[0] for p in pnls]),
         premium_at_risk_today=float(at_risk),
+        open_positions_underlying=int(open_underlying),
         seconds_since_symbol_trade=float(last[0]) if last else None,
         minutes_since_open=minutes_since_open,
         minutes_to_macro=minutes_to_macro,

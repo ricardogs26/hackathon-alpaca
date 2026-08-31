@@ -18,6 +18,7 @@ from optionwright.options.models import VerticalSpread
 class RuleSet:
     max_loss_pct: float = 0.01          # max loss per position as a fraction of equity
     max_open_positions: int = 3
+    max_per_underlying: int = 2         # cap concurrent positions on one symbol (anti-concentration)
     daily_budget_pct: float = 0.05      # capital-at-risk deployable per day
     cooldown_seconds: float = 3600.0    # per-underlying re-entry cooldown
     max_consecutive_losses: int = 3
@@ -31,6 +32,7 @@ class PolicyState:
     open_positions: int
     consecutive_losses: int
     premium_at_risk_today: float                 # sum of max-loss already deployed today
+    open_positions_underlying: int = 0           # open positions on THIS spread's underlying
     seconds_since_symbol_trade: float | None = None   # None = never traded this symbol
     minutes_since_open: float | None = None           # None = unknown (gate skipped)
     minutes_to_macro: float | None = None             # None = no upcoming macro event
@@ -66,9 +68,14 @@ def evaluate(
     if state.consecutive_losses >= rules.max_consecutive_losses:
         return Verdict(False, 0, f"circuit breaker: {state.consecutive_losses} consecutive losses")
 
-    # 2 — Open positions cap.
+    # 2 — Open positions cap (global).
     if state.open_positions >= rules.max_open_positions:
         return Verdict(False, 0, f"open positions cap: {state.open_positions}/{rules.max_open_positions}")
+
+    # 2b — Per-underlying cap (anti-concentration: don't pile N bets on one symbol).
+    if state.open_positions_underlying >= rules.max_per_underlying:
+        return Verdict(False, 0,
+                       f"per-underlying cap: {state.open_positions_underlying}/{rules.max_per_underlying} on {spread.underlying}")
 
     # 3 — Per-underlying cooldown.
     if state.seconds_since_symbol_trade is not None and state.seconds_since_symbol_trade < rules.cooldown_seconds:
