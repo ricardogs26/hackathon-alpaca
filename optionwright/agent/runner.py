@@ -46,8 +46,12 @@ def _minutes_since_open() -> float | None:
         cal = tc.get_calendar(GetCalendarRequest(start=today, end=today))
         if not cal:
             return None
-        open_dt = cal[0].open  # tz-aware session open
-        now = clock.timestamp   # tz-aware current market time
+        open_dt = cal[0].open   # session open (may be naive ET or a date+time)
+        now = clock.timestamp    # tz-aware current market time
+        if open_dt.tzinfo is None:
+            import pytz
+
+            open_dt = pytz.timezone("America/New_York").localize(open_dt)
         return max(0.0, (now - open_dt).total_seconds() / 60.0)
     except Exception as exc:  # never let the clock/calendar break a cycle
         logger.warning("minutes_since_open unavailable: %s", exc)
