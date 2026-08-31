@@ -8,7 +8,7 @@
   ],
   "timezone": "",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "refresh": "30s",
   "time": {
     "from": "now-6h",
@@ -41,8 +41,8 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyUSD",
-          "decimals": 0,
+          "unit": "currency:$",
+          "decimals": 2,
           "color": {
             "mode": "fixed",
             "fixedColor": "text"
@@ -80,7 +80,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyUSD",
+          "unit": "currency:$",
           "decimals": 2,
           "thresholds": {
             "mode": "absolute",
@@ -214,12 +214,13 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyUSD",
+          "unit": "currency:$",
           "custom": {
             "fillOpacity": 12,
             "lineWidth": 2,
             "showPoints": "never"
-          }
+          },
+          "decimals": 2
         },
         "overrides": []
       },
