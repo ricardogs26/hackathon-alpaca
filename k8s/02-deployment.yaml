@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: optionwright
-          image: registry.richardx.dev/optionwright:0.1.2
+          image: registry.richardx.dev/optionwright:0.1.3
           ports:
             - containerPort: 8080
           env:
