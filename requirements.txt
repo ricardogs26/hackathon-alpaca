@@ -1,5 +1,6 @@
 # Core
 alpaca-py==0.33.1          # Alpaca trading + market data (options chain)
+pytz==2024.2
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
