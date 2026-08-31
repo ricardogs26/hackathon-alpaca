@@ -95,6 +95,45 @@ def save_equity(equity: float, cash: float | None) -> None:
     metrics.set_equity(equity)
 
 
+def _rows(cur) -> list[dict]:
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def get_equity_curve(limit: int = 500) -> list[dict]:
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT ts, equity, cash FROM equity_curve ORDER BY ts DESC LIMIT %s", (limit,)
+        )
+        rows = _rows(cur)
+    rows.reverse()  # chronological for charting
+    return [{"ts": r["ts"].isoformat(), "equity": r["equity"], "cash": r["cash"]} for r in rows]
+
+
+def get_positions(limit: int = 50) -> list[dict]:
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT id, ts_open, underlying, option_right, expiry, short_symbol, long_symbol,"
+            " contracts, credit, max_loss, status, realized_pnl, exit_reason"
+            " FROM positions ORDER BY ts_open DESC LIMIT %s", (limit,)
+        )
+        rows = _rows(cur)
+    for r in rows:
+        r["ts_open"] = r["ts_open"].isoformat()
+        r["expiry"] = str(r["expiry"])
+    return rows
+
+
+def get_decisions(limit: int = 30) -> list[dict]:
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT ts, underlying, direction, confidence, rationale, approved, contracts, reason"
+            " FROM decisions ORDER BY ts DESC LIMIT %s", (limit,)
+        )
+        rows = _rows(cur)
+    return [{**r, "ts": r["ts"].isoformat()} for r in rows]
+
+
 def _consecutive_losses(realized_pnls_desc: list[float]) -> int:
     """Leading run of losing trades (pnl < 0) from most-recent backwards."""
     n = 0

@@ -71,3 +71,33 @@ def status() -> dict:
         "model": s.llm_model,
         "paper": s.alpaca_paper,
     }
+
+
+@app.get("/api/equity")
+def equity(limit: int = 500) -> list[dict]:
+    from optionwright.storage import store
+
+    return store.get_equity_curve(limit)
+
+
+@app.get("/api/positions")
+def positions(limit: int = 50) -> list[dict]:
+    from optionwright.storage import store
+
+    return store.get_positions(limit)
+
+
+@app.get("/api/decisions")
+def decisions(limit: int = 30) -> list[dict]:
+    from optionwright.storage import store
+
+    return store.get_decisions(limit)
+
+
+@app.get("/", response_class=None)
+def dashboard():
+    from fastapi.responses import HTMLResponse
+
+    from optionwright.api.dashboard import DASHBOARD_HTML
+
+    return HTMLResponse(DASHBOARD_HTML)
