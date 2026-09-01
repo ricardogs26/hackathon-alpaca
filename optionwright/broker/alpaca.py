@@ -93,18 +93,35 @@ def _to_quote(contract, snapshot, underlying: str) -> OptionQuote | None:
 
 
 # ── Networked reads ───────────────────────────────────────────────────────────
+# Daily bars only change once a day, but the agent asks for them every cycle
+# (every ~2 min). Cache them per underlying so we don't re-fetch 30 days of bars
+# ~30×/hour — that fetch was a big chunk of each cycle's wall time.
+_BARS_TTL_SECONDS = 1800  # 30 min
+_bars_cache: dict[str, tuple[float, list[float]]] = {}  # underlying -> (expires_monotonic, closes)
+
+
 def recent_bars(underlying: str, days: int = 30) -> list[float]:
-    """Cierres diarios cronológicos (viejo→nuevo) de las últimas ~`days` sesiones."""
+    """Cierres diarios cronológicos (viejo→nuevo) de las últimas ~`days` sesiones.
+    Cacheado 30 min: las barras diarias no cambian intradía."""
+    import time
     from datetime import datetime, timedelta, timezone
 
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
 
+    now = time.monotonic()
+    hit = _bars_cache.get(underlying)
+    if hit and hit[0] > now:
+        return hit[1]
+
     start = datetime.now(timezone.utc) - timedelta(days=days * 2)  # holgura fines de semana
     req = StockBarsRequest(symbol_or_symbols=underlying, timeframe=TimeFrame.Day, start=start)
     resp = _stock_data_client().get_stock_bars(req)
     bars = resp.data.get(underlying, []) if hasattr(resp, "data") else []
-    return [float(b.close) for b in bars]
+    closes = [float(b.close) for b in bars]
+    if closes:  # never cache an empty result (Alpaca hiccup) — retry next cycle
+        _bars_cache[underlying] = (now + _BARS_TTL_SECONDS, closes)
+    return closes
 
 
 def get_spot(underlying: str) -> float:
