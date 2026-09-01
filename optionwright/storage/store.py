@@ -122,7 +122,7 @@ def get_equity_curve(limit: int = 500) -> list[dict]:
 def get_positions(limit: int = 50) -> list[dict]:
     with _conn() as c:
         cur = c.execute(
-            "SELECT id, ts_open, underlying, option_right, expiry, short_symbol, long_symbol,"
+            "SELECT id, ts_open, ts_close, underlying, option_right, expiry, short_symbol, long_symbol,"
             " contracts, credit, max_loss, status, realized_pnl, exit_reason,"
             " coalesce(peak_captured,0) AS peak_captured"
             " FROM positions ORDER BY ts_open DESC LIMIT %s", (limit,)
@@ -130,6 +130,7 @@ def get_positions(limit: int = 50) -> list[dict]:
         rows = _rows(cur)
     for r in rows:
         r["ts_open"] = r["ts_open"].isoformat()
+        r["ts_close"] = r["ts_close"].isoformat() if r.get("ts_close") else None
         r["expiry"] = str(r["expiry"])
     return rows
 

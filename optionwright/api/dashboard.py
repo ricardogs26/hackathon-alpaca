@@ -67,6 +67,33 @@ DASHBOARD_HTML = r"""<!doctype html>
   .fbtn.on{background:var(--acc);border-color:var(--acc);color:#0e1613}
   .foot{margin-top:26px;color:var(--ink3);font-size:.78rem;text-align:center;font-family:var(--mono)}
   a{color:var(--acc)}
+  /* Live Decision Stream */
+  .streamhead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+  .livechip{font:600 .64rem/1 var(--mono);letter-spacing:.12em;color:var(--acc);border:1px solid var(--line);
+    border-radius:6px;padding:5px 8px;background:rgba(61,186,140,.06);display:inline-flex;align-items:center;gap:6px}
+  .livechip .dot{width:6px;height:6px;box-shadow:none;animation:hb 1.8s infinite}
+  @keyframes hb{0%{box-shadow:0 0 0 2px rgba(61,186,140,.28)}70%{box-shadow:0 0 0 6px rgba(61,186,140,0)}100%{box-shadow:0 0 0 0 rgba(61,186,140,0)}}
+  .stream{font-family:var(--mono);font-size:.82rem;margin-top:12px}
+  .srow{display:grid;grid-template-columns:70px 54px 1fr auto;gap:12px;align-items:center;
+    padding:10px 2px;border-bottom:1px solid var(--line);animation:fade .5s both}
+  .srow:last-child{border-bottom:none}
+  @keyframes fade{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+  .srow .tm{color:var(--ink3)}
+  .srow .sy{font-weight:600;color:var(--acc2)}
+  .srow .mg{color:var(--ink2);font-size:.85rem;font-family:-apple-system,"Segoe UI",sans-serif;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .srow .mg b{color:var(--ink);font-weight:600}
+  .vd{font:600 .64rem/1 var(--mono);letter-spacing:.05em;padding:4px 8px;border-radius:6px;white-space:nowrap;text-align:right}
+  .vd-open{color:var(--acc);background:rgba(61,186,140,.12);border:1px solid var(--line)}
+  .vd-close{color:var(--acc2);background:rgba(87,201,158,.12);border:1px solid rgba(87,201,158,.28)}
+  .vd-veto{color:var(--warn);background:rgba(217,154,78,.10);border:1px solid rgba(217,154,78,.28)}
+  .vd-abs{color:var(--ink3);background:var(--raise);border:1px solid var(--line)}
+  .curs{display:inline-block;width:7px;height:12px;background:var(--acc);margin-left:3px;vertical-align:-2px;animation:bl 1s step-end infinite}
+  @keyframes bl{50%{opacity:0}}
+  .streamfoot{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;
+    justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--ink3);font:500 .74rem/1 var(--mono)}
+  .badgeNEW{font:600 .58rem/1 var(--mono);letter-spacing:.1em;color:#0e1613;background:var(--acc);
+    border-radius:4px;padding:3px 6px;margin-left:8px;vertical-align:middle}
 </style>
 </head>
 <body>
@@ -95,18 +122,24 @@ DASHBOARD_HTML = r"""<!doctype html>
       <div id="positions"><div class="muted">No positions yet.</div></div>
     </div>
     <div class="card wide">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-        <h2 style="margin:0">Decision log — why each cycle acted</h2>
-        <div id="decfilters">
-          <button class="fbtn on" data-f="all">All</button>
-          <button class="fbtn" data-f="opened">Opened</button>
-          <button class="fbtn" data-f="vetoed">Vetoed</button>
-          <button class="fbtn" data-f="abstain">Abstain</button>
-          <button class="fbtn" data-f="SPY">SPY</button>
-          <button class="fbtn" data-f="QQQ">QQQ</button>
+      <div class="streamhead">
+        <h2 style="margin:0">Live Decision Stream<span class="badgeNEW">LIVE</span></h2>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span class="livechip"><span class="dot"></span>LIVE · 120s</span>
+          <div id="decfilters" style="display:inline-flex;gap:0;flex-wrap:wrap">
+            <button class="fbtn on" data-f="all">All</button>
+            <button class="fbtn" data-f="opened">Opened</button>
+            <button class="fbtn" data-f="closed">Closed</button>
+            <button class="fbtn" data-f="vetoed">Vetoed</button>
+            <button class="fbtn" data-f="abstain">Abstain</button>
+            <button class="fbtn" data-f="SPY">SPY</button>
+            <button class="fbtn" data-f="QQQ">QQQ</button>
+            <button class="fbtn" data-f="IWM">IWM</button>
+          </div>
         </div>
       </div>
-      <div class="feed" id="decisions" style="margin-top:12px"><div class="muted">Waiting for the first cycle…</div></div>
+      <div class="stream" id="decisions"><div class="muted">Waiting for the first cycle…</div></div>
+      <div class="streamfoot" id="streamfoot"><span></span><span>streaming<span class="curs"></span></span></div>
     </div>
   </div>
   <div class="foot">optionwright · paper trading · auto-refresh 15s · <a href="/metrics">/metrics</a></div>
@@ -162,12 +195,18 @@ async function refresh(){
   }
   const pos = await j('/api/positions?limit=50') || [];
   const open = pos.filter(p=>p.status==='open').length, closed = pos.filter(p=>p.status==='closed');
+  _closedPos = closed;
   const wins = closed.filter(p=>(p.realized_pnl||0)>0).length;
+  const realized = closed.reduce((s,p)=>s+(p.realized_pnl||0),0);
   $('counts').innerHTML =
     `<div style="display:flex;gap:22px;flex-wrap:wrap">
        <div><div class="big">${open}</div><div class="sub">open spreads</div></div>
        <div><div class="big">${closed.length}</div><div class="sub">closed</div></div>
        <div><div class="big">${closed.length?Math.round(wins/closed.length*100):'—'}${closed.length?'%':''}</div><div class="sub">win rate</div></div>
+     </div>
+     <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+       <div class="card h2" style="all:unset;font:500 .72rem/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)">Realized P&L (net)</div>
+       <div class="big ${realized>=0?'up':'down'}" style="font-size:1.6rem;margin-top:5px">${realized>=0?'+':''}${money(realized)}</div>
      </div>`;
   if(pos.length){
     $('positions').innerHTML =
@@ -188,25 +227,67 @@ async function refresh(){
 }
 
 let _decisions = [];
+let _closedPos = [];
 let _decFilter = 'all';
-function matchFilter(d){
+
+// Merge cycle decisions (open/veto/abstain) and position exits (close) into one
+// time-ordered event list — the single "what the agent did" log.
+function buildEvents(){
+  const ev = [];
+  for(const d of _decisions){
+    const kind = d.approved ? 'open' : (d.direction==='abstain' ? 'abstain' : 'veto');
+    ev.push({t:d.ts, u:d.underlying, kind, dir:d.direction, conf:d.confidence,
+             reason:d.reason||d.rationale||'', contracts:d.contracts});
+  }
+  for(const p of _closedPos){
+    ev.push({t:p.ts_close||p.ts_open, u:p.underlying, kind:'close',
+             reason:p.exit_reason||'exit by rule', pnl:p.realized_pnl});
+  }
+  ev.sort((a,b)=> (a.t<b.t?1:a.t>b.t?-1:0));
+  return ev;
+}
+function matchFilter(e){
   if(_decFilter==='all') return true;
-  if(_decFilter==='SPY'||_decFilter==='QQQ') return d.underlying===_decFilter;
-  if(_decFilter==='opened') return d.approved;
-  if(_decFilter==='vetoed') return !d.approved && d.direction!=='abstain';
-  if(_decFilter==='abstain') return d.direction==='abstain';
+  if(_decFilter==='SPY'||_decFilter==='QQQ'||_decFilter==='IWM') return e.u===_decFilter;
+  if(_decFilter==='opened') return e.kind==='open';
+  if(_decFilter==='closed') return e.kind==='close';
+  if(_decFilter==='vetoed') return e.kind==='veto';
+  if(_decFilter==='abstain') return e.kind==='abstain';
   return true;
 }
 function renderDecisions(){
-  const rows = _decisions.filter(matchFilter);
+  const all = buildEvents();
+  const rows = all.filter(matchFilter);
   const el = $('decisions');
-  if(!rows.length){ el.innerHTML = '<div class="muted">No decisions match this filter.</div>'; return; }
-  el.innerHTML = rows.map(d=>
-    `<div class="d"><span class="tm">${d.ts.slice(5,16).replace('T',' ')}</span>`+
-    `<span class="rs">${dirTag(d.direction)} <b>${d.underlying}</b> — ${d.reason||d.rationale||''}`+
-    `${d.approved?` · opened ${d.contracts}x`:''}</span>`+
-    `<span class="tm">${d.confidence!=null?'conf '+Number(d.confidence).toFixed(2):''}</span></div>`
-  ).join('');
+  const nOpen=all.filter(e=>e.kind==='open').length, nClose=all.filter(e=>e.kind==='close').length,
+        nVeto=all.filter(e=>e.kind==='veto').length, nAbs=all.filter(e=>e.kind==='abstain').length;
+  $('streamfoot').innerHTML =
+    `<span>today: ${nClose} closes · ${nOpen} opens · ${nVeto} vetoes · ${nAbs} abstains</span>`+
+    `<span>streaming<span class="curs"></span></span>`;
+  if(!rows.length){ el.innerHTML = '<div class="muted">No events match this filter.</div>'; return; }
+  el.innerHTML = rows.map(e=>{
+    const tm = (e.t||'').slice(11,19);
+    const syCol = e.dir==='bearish' ? 'var(--loss)' : (e.dir==='bullish' ? 'var(--acc)' : 'var(--acc2)');
+    const conf = e.conf!=null ? Number(e.conf).toFixed(2) : '';
+    let msg='', vd='';
+    if(e.kind==='open'){
+      msg = `<b>${e.dir}</b> ${conf} · opened ${e.contracts}× spread`;
+      vd = `<span class="vd vd-open">OPEN ${e.contracts}×</span>`;
+    } else if(e.kind==='close'){
+      const pnl=e.pnl; const c=pnl==null?'':(pnl>=0?'up':'down');
+      msg = `closed · <b>${e.reason}</b>`;
+      vd = `<span class="vd vd-close">CLOSE${pnl==null?'':` <span class="${c}">${pnl>=0?'+':''}${money(pnl)}</span>`}</span>`;
+    } else if(e.kind==='veto'){
+      msg = `<b>${e.dir}</b> ${conf} · ${e.reason}`;
+      vd = `<span class="vd vd-veto">VETO</span>`;
+    } else {
+      msg = e.reason || 'no directional edge';
+      vd = `<span class="vd vd-abs">ABSTAIN</span>`;
+    }
+    return `<div class="srow"><span class="tm">${tm}</span>`+
+           `<span class="sy" style="color:${syCol}">${e.u}</span>`+
+           `<span class="mg">${msg}</span>${vd}</div>`;
+  }).join('');
 }
 document.getElementById('decfilters').addEventListener('click', e=>{
   const b = e.target.closest('.fbtn'); if(!b) return;
