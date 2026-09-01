@@ -33,6 +33,9 @@ async def lifespan(app: FastAPI):
         curve = store.get_equity_curve(1)  # seed equity so it doesn't flash $0 after a restart
         if curve:
             metrics.set_equity(curve[-1]["equity"])
+        conf = store.last_opened_confidence()  # so the panel isn't 0.00 until the next trade
+        if conf is not None:
+            metrics.CONFIDENCE_OPENED.set(conf)
     except Exception as exc:  # DB may still be starting; scheduler retries anyway
         logger.warning("startup DB step deferred: %s", exc)
 

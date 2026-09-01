@@ -145,6 +145,17 @@ def get_decisions(limit: int = 30) -> list[dict]:
     return [{**r, "ts": r["ts"].isoformat()} for r in rows]
 
 
+def last_opened_confidence() -> float | None:
+    """Confidence of the most recent decision that actually opened a position.
+    Seeds the confidence-on-trades gauge at startup so it survives redeploys."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT confidence FROM decisions WHERE approved=true AND confidence IS NOT NULL"
+            " ORDER BY ts DESC LIMIT 1"
+        ).fetchone()
+    return float(row[0]) if row else None
+
+
 def _consecutive_losses(realized_pnls_desc: list[float]) -> int:
     """Leading run of losing trades (pnl < 0) from most-recent backwards."""
     n = 0
