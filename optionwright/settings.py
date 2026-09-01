@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     daily_budget_pct: float = Field(default=0.22, alias="DAILY_BUDGET_PCT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # Contexto agéntico: percepción + memoria + portafolio inyectados al LLM
+    agent_rich_context: bool = Field(default=True, alias="AGENT_RICH_CONTEXT")
+    perception_trend_flat_pct: float = Field(default=1.0, alias="PERCEPTION_TREND_FLAT_PCT")
+    perception_vol_high_pct: float = Field(default=1.2, alias="PERCEPTION_VOL_HIGH_PCT")
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

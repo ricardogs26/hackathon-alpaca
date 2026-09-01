@@ -93,6 +93,20 @@ def _to_quote(contract, snapshot, underlying: str) -> OptionQuote | None:
 
 
 # ── Networked reads ───────────────────────────────────────────────────────────
+def recent_bars(underlying: str, days: int = 30) -> list[float]:
+    """Cierres diarios cronológicos (viejo→nuevo) de las últimas ~`days` sesiones."""
+    from datetime import datetime, timedelta, timezone
+
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+
+    start = datetime.now(timezone.utc) - timedelta(days=days * 2)  # holgura fines de semana
+    req = StockBarsRequest(symbol_or_symbols=underlying, timeframe=TimeFrame.Day, start=start)
+    resp = _stock_data_client().get_stock_bars(req)
+    bars = resp.data.get(underlying, []) if hasattr(resp, "data") else []
+    return [float(b.close) for b in bars]
+
+
 def get_spot(underlying: str) -> float:
     from alpaca.data.requests import StockLatestTradeRequest
 

@@ -25,13 +25,17 @@ from optionwright.settings import get_settings
 logger = logging.getLogger("optionwright.analyzer")
 
 _SYSTEM = (
-    "You are the direction module of an options trading agent. You are given a "
-    "market snapshot and two pre-built, defined-risk credit spreads whose strikes, "
-    "credit and max loss have ALREADY been computed in code. Do NOT recompute any "
-    "number. Your only job: decide whether the next move favors the bull put "
-    "spread (bullish), the bear call spread (bearish), or neither (abstain). "
-    'Reply ONLY as JSON: {"direction":"bullish|bearish|abstain","confidence":0.0-1.0,'
-    '"rationale":"one short sentence"}. Abstain whenever the edge is unclear.'
+    "Eres un estratega de opciones. Recibes: señales de mercado ya calculadas en "
+    "código (tendencia, momentum, régimen), tu memoria de trades recientes en este "
+    "subyacente, un resumen del libro abierto (concentración, dirección), y dos "
+    "spreads de crédito de riesgo definido ya construidos (strikes, crédito, max "
+    "loss — NO los recalcules). Razona con las señales y el contexto para decidir "
+    "si el próximo movimiento favorece el bull put (alcista), el bear call "
+    "(bajista), o ninguno (abstain). Considera la concentración del libro: evita "
+    "cargar más el mismo lado. El riesgo y el tamaño los maneja el código; tu único "
+    'trabajo es la dirección. Responde SOLO como JSON: {"direction":"bullish|'
+    'bearish|abstain","confidence":0.0-1.0,"rationale":"una frase corta citando las '
+    'señales"}. Abstente cuando no haya ventaja clara.'
 )
 
 
