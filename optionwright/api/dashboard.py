@@ -32,16 +32,26 @@ DASHBOARD_HTML = r"""<!doctype html>
     box-shadow:0 0 0 3px rgba(61,186,140,.18)}
   .pill{font:500 .7rem/1 var(--mono);letter-spacing:.04em;padding:.4em .65em;border-radius:99px;
     background:var(--raise);border:1px solid var(--line);color:var(--ink2)}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:22px}
-  @media(max-width:720px){.grid{grid-template-columns:1fr}}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:22px}
+  .card.eq{grid-column:span 3}
+  .card.sess{grid-column:span 1}
+  @media(max-width:720px){.grid{grid-template-columns:1fr}
+    .card.eq,.card.sess{grid-column:1/-1}}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
   .card.wide{grid-column:1/-1}
+  /* This session, stacked for the narrow column */
+  .sessrow{display:flex;justify-content:space-between;align-items:baseline;
+    border-bottom:1px solid var(--line);padding:0 0 10px;margin-bottom:10px}
+  .sessrow:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+  .sessrow .k{color:var(--ink3);font:500 .68rem/1 var(--mono);letter-spacing:.06em;text-transform:uppercase}
+  .sessrow .n{font-size:1.5rem;font-weight:700;font-variant-numeric:tabular-nums}
+  .daylab{font:500 10px/1 var(--mono);fill:var(--ink3)}
   .card h2{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);
     margin:0 0 14px;font-family:var(--mono);font-weight:500}
   .big{font-size:2.1rem;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-1px}
   .sub{color:var(--ink2);font-size:.9rem;margin-top:2px}
   .up{color:var(--gain)} .down{color:var(--loss)}
-  svg{width:100%;height:120px;display:block;margin-top:6px}
+  svg{width:100%;height:150px;display:block;margin-top:10px}
   table{width:100%;border-collapse:collapse;font-size:.88rem}
   th{text-align:left;font:500 .64rem/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;
     color:var(--ink3);padding:8px 8px;border-bottom:1px solid var(--line)}
@@ -107,13 +117,13 @@ DASHBOARD_HTML = r"""<!doctype html>
   </header>
 
   <div class="grid">
-    <div class="card">
+    <div class="card eq">
       <h2>Account equity</h2>
       <div class="big" id="equity">—</div>
       <div class="sub" id="pnl">since $100,000 start</div>
-      <svg id="spark" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+      <svg id="spark" viewBox="0 0 600 134" preserveAspectRatio="none"></svg>
     </div>
-    <div class="card">
+    <div class="card sess">
       <h2>This session</h2>
       <div id="counts"></div>
     </div>
@@ -151,21 +161,41 @@ const fmt = n => (n==null?'—':Number(n).toLocaleString('en-US',{maximumFractio
 const money = n => '$'+fmt(n);
 async function j(u){ try{ const r=await fetch(u); return await r.json(); }catch(e){ return null; } }
 
+const MES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 function spark(pts){
   const svg=$('spark'); svg.innerHTML='';
   if(!pts||pts.length<2){ return; }
   const ys=pts.map(p=>p.equity), min=Math.min(...ys), max=Math.max(...ys), rng=(max-min)||1;
-  const W=600,H=120,pad=6;
+  const W=600,Hc=110,pad=6,labelY=128;   // Hc = drawing area; labels sit below at 128
   const x=i=>pad+i*(W-2*pad)/(pts.length-1);
-  const y=v=>H-pad-((v-min)/rng)*(H-2*pad);
+  const y=v=>Hc-pad-((v-min)/rng)*(Hc-2*pad);
+  // Group points by calendar date — one faded band per trading day. Weekends
+  // have no equity points, so they never get a band (omitted automatically).
+  const segs=[]; let start=0;
+  for(let i=1;i<=pts.length;i++){
+    const prev=pts[i-1].ts.slice(0,10);
+    if(i===pts.length || pts[i].ts.slice(0,10)!==prev){ segs.push({date:prev,a:start,b:i-1}); start=i; }
+  }
+  let bands='';
+  segs.forEach((s,k)=>{
+    const left  = k===0 ? 0 : (x(segs[k-1].b)+x(s.a))/2;
+    const right = k===segs.length-1 ? W : (x(s.b)+x(segs[k+1].a))/2;
+    if(k%2===0) bands+=`<rect x="${left.toFixed(1)}" y="0" width="${(right-left).toFixed(1)}" height="${Hc}" fill="rgba(61,186,140,.06)"/>`;
+    if(k>0) bands+=`<line x1="${left.toFixed(1)}" y1="0" x2="${left.toFixed(1)}" y2="${Hc}" stroke="var(--line)" stroke-dasharray="3 4"/>`;
+    if(right-left>=38){
+      const p=s.date.split('-'); const lab=`${+p[2]} ${MES[+p[1]-1]}`;
+      bands+=`<text class="daylab" x="${((left+right)/2).toFixed(1)}" y="${labelY}" text-anchor="middle">${lab}</text>`;
+    }
+  });
   let d='M'+pts.map((p,i)=>x(i).toFixed(1)+','+y(p.equity).toFixed(1)).join(' L');
   const up = ys[ys.length-1] >= ys[0];
   const col = up ? 'var(--gain)' : 'var(--loss)';
-  const area = d+` L${x(pts.length-1).toFixed(1)},${H-pad} L${x(0).toFixed(1)},${H-pad} Z`;
+  const area = d+` L${x(pts.length-1).toFixed(1)},${Hc-pad} L${x(0).toFixed(1)},${Hc-pad} Z`;
   svg.innerHTML =
     `<defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
        <stop offset="0" stop-color="${col}" stop-opacity="0.28"/>
        <stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+     ${bands}
      <path d="${area}" fill="url(#g)"/>
      <path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
      <circle cx="${x(pts.length-1).toFixed(1)}" cy="${y(ys[ys.length-1]).toFixed(1)}" r="3.2" fill="${col}"/>`;
@@ -198,16 +228,12 @@ async function refresh(){
   _closedPos = closed;
   const wins = closed.filter(p=>(p.realized_pnl||0)>0).length;
   const realized = closed.reduce((s,p)=>s+(p.realized_pnl||0),0);
+  const winrate = closed.length?Math.round(wins/closed.length*100)+'%':'—';
   $('counts').innerHTML =
-    `<div style="display:flex;gap:22px;flex-wrap:wrap">
-       <div><div class="big">${open}</div><div class="sub">open spreads</div></div>
-       <div><div class="big">${closed.length}</div><div class="sub">closed</div></div>
-       <div><div class="big">${closed.length?Math.round(wins/closed.length*100):'—'}${closed.length?'%':''}</div><div class="sub">win rate</div></div>
-     </div>
-     <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
-       <div class="card h2" style="all:unset;font:500 .72rem/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)">Realized P&L (net)</div>
-       <div class="big ${realized>=0?'up':'down'}" style="font-size:1.6rem;margin-top:5px">${realized>=0?'+':''}${money(realized)}</div>
-     </div>`;
+    `<div class="sessrow"><span class="k">Open</span><span class="n">${open}</span></div>
+     <div class="sessrow"><span class="k">Closed</span><span class="n">${closed.length}</span></div>
+     <div class="sessrow"><span class="k">Win rate</span><span class="n up">${winrate}</span></div>
+     <div class="sessrow"><span class="k">Realized P&L</span><span class="n ${realized>=0?'up':'down'}" style="font-size:1.15rem">${realized>=0?'+':''}${money(realized)}</span></div>`;
   if(pos.length){
     $('positions').innerHTML =
       '<div style="overflow-x:auto"><table><tr><th>Opened</th><th>Underlying</th><th>Spread</th><th>Qty</th><th>Credit</th><th>Max loss</th><th>Status</th><th>P&L</th></tr>'+
