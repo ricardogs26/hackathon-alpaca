@@ -118,14 +118,22 @@ DASHBOARD_HTML = r"""<!doctype html>
 
   <div class="grid">
     <div class="card eq">
-      <h2>Account equity</h2>
-      <div class="big" id="equity">—</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Account equity</h2>
+        <div id="eqranges" style="display:inline-flex;gap:4px">
+          <button class="fbtn on" data-d="7">7D</button>
+          <button class="fbtn" data-d="30">30D</button>
+          <button class="fbtn" data-d="999">Todo</button>
+        </div>
+      </div>
+      <div class="big" id="equity" style="margin-top:12px">—</div>
       <div class="sub" id="pnl">since $100,000 start</div>
       <svg id="spark" viewBox="0 0 600 134" preserveAspectRatio="none"></svg>
     </div>
     <div class="card sess">
-      <h2>This session</h2>
+      <h2>Resumen</h2>
       <div id="counts"></div>
+      <div class="sub" id="rangepnl" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"></div>
     </div>
     <div class="card wide">
       <h2>Positions</h2>
@@ -162,6 +170,12 @@ const money = n => '$'+fmt(n);
 async function j(u){ try{ const r=await fetch(u); return await r.json(); }catch(e){ return null; } }
 
 const MES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+function _weekKey(iso){  // Monday of that ISO date's week, as YYYY-MM-DD
+  const [Y,M,D]=iso.split('-').map(Number);
+  const dt=new Date(Date.UTC(Y,M-1,D));
+  dt.setUTCDate(dt.getUTCDate()-((dt.getUTCDay()+6)%7));
+  return dt.toISOString().slice(0,10);
+}
 function spark(pts){
   const svg=$('spark'); svg.innerHTML='';
   if(!pts||pts.length<2){ return; }
@@ -169,12 +183,13 @@ function spark(pts){
   const W=600,Hc=110,pad=6,labelY=128;   // Hc = drawing area; labels sit below at 128
   const x=i=>pad+i*(W-2*pad)/(pts.length-1);
   const y=v=>Hc-pad-((v-min)/rng)*(Hc-2*pad);
-  // Group points by calendar date — one faded band per trading day. Weekends
-  // have no equity points, so they never get a band (omitted automatically).
+  // Adaptive bands: one per DAY when few, per WEEK when many, so 20-30+ days
+  // never crowd. Weekends have no equity points, so they never get a band.
+  const byWeek = pts.length>10;
+  const keyOf = p => byWeek ? _weekKey(p.ts.slice(0,10)) : p.ts.slice(0,10);
   const segs=[]; let start=0;
   for(let i=1;i<=pts.length;i++){
-    const prev=pts[i-1].ts.slice(0,10);
-    if(i===pts.length || pts[i].ts.slice(0,10)!==prev){ segs.push({date:prev,a:start,b:i-1}); start=i; }
+    if(i===pts.length || keyOf(pts[i])!==keyOf(pts[i-1])){ segs.push({key:keyOf(pts[start]),a:start,b:i-1}); start=i; }
   }
   let bands='';
   segs.forEach((s,k)=>{
@@ -182,8 +197,8 @@ function spark(pts){
     const right = k===segs.length-1 ? W : (x(s.b)+x(segs[k+1].a))/2;
     if(k%2===0) bands+=`<rect x="${left.toFixed(1)}" y="0" width="${(right-left).toFixed(1)}" height="${Hc}" fill="rgba(61,186,140,.06)"/>`;
     if(k>0) bands+=`<line x1="${left.toFixed(1)}" y1="0" x2="${left.toFixed(1)}" y2="${Hc}" stroke="var(--line)" stroke-dasharray="3 4"/>`;
-    if(right-left>=38){
-      const p=s.date.split('-'); const lab=`${+p[2]} ${MES[+p[1]-1]}`;
+    if(right-left>=34){
+      const p=s.key.split('-'); const lab=`${byWeek?'sem ':''}${+p[2]} ${MES[+p[1]-1]}`;
       bands+=`<text class="daylab" x="${((left+right)/2).toFixed(1)}" y="${labelY}" text-anchor="middle">${lab}</text>`;
     }
   });
@@ -199,6 +214,21 @@ function spark(pts){
      <path d="${area}" fill="url(#g)"/>
      <path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
      <circle cx="${x(pts.length-1).toFixed(1)}" cy="${y(ys[ys.length-1]).toFixed(1)}" r="3.2" fill="${col}"/>`;
+}
+
+let _eqAll = [], _eqRange = 7;
+function drawEquity(){
+  if(!_eqAll.length) return;
+  const last=_eqAll[_eqAll.length-1].equity, base=100000, pnl=last-base, pct=pnl/base*100;
+  $('equity').textContent = money(last);
+  $('pnl').innerHTML = `<span class="${pnl>=0?'up':'down'}">${pnl>=0?'+':''}${money(pnl)} (${pnl>=0?'+':''}${pct.toFixed(2)}%)</span> since $100k start`;
+  const pts = _eqRange>=999 ? _eqAll : _eqAll.slice(-_eqRange);
+  spark(pts);
+  if(pts.length>=2){
+    const chg=pts[pts.length-1].equity-pts[0].equity, cpct=chg/pts[0].equity*100;
+    const lbl=_eqRange>=999?'todo el periodo':`${_eqRange} días`;
+    $('rangepnl').innerHTML=`En este rango (${lbl}): <span class="${chg>=0?'up':'down'}">${chg>=0?'+':''}${money(chg)} (${chg>=0?'+':''}${cpct.toFixed(2)}%)</span>`;
+  } else { $('rangepnl').textContent=''; }
 }
 
 function dirTag(d){
@@ -217,12 +247,7 @@ async function refresh(){
       `<span class="pill">${st.paper?'PAPER':'LIVE'}</span>`;
   }
   const eq = await j('/api/equity?limit=500');
-  if(eq && eq.length){
-    const last=eq[eq.length-1].equity, base=100000, pnl=last-base, pct=pnl/base*100;
-    $('equity').textContent = money(last);
-    $('pnl').innerHTML = `<span class="${pnl>=0?'up':'down'}">${pnl>=0?'+':''}${money(pnl)} (${pnl>=0?'+':''}${pct.toFixed(2)}%)</span> since $100k start`;
-    spark(eq);
-  }
+  if(eq && eq.length){ _eqAll = eq; drawEquity(); }
   const pos = await j('/api/positions?limit=50') || [];
   const open = pos.filter(p=>p.status==='open').length, closed = pos.filter(p=>p.status==='closed');
   _closedPos = closed;
@@ -320,6 +345,12 @@ document.getElementById('decfilters').addEventListener('click', e=>{
   _decFilter = b.dataset.f;
   document.querySelectorAll('#decfilters .fbtn').forEach(x=>x.classList.toggle('on', x===b));
   renderDecisions();
+});
+document.getElementById('eqranges').addEventListener('click', e=>{
+  const b = e.target.closest('.fbtn'); if(!b) return;
+  _eqRange = +b.dataset.d;
+  document.querySelectorAll('#eqranges .fbtn').forEach(x=>x.classList.toggle('on', x===b));
+  drawEquity();
 });
 refresh(); setInterval(refresh, 15000);
 </script>
