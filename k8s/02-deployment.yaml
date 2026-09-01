@@ -65,17 +65,20 @@ spec:
               value: "120"
             - name: LOG_LEVEL
               value: "INFO"
-            # Risk / strategy tuning (moderate deployment increase for the contest)
+            # Risk / strategy tuning — judged-week sprint (Sep 1-3): shorter DTE
+            # (2d) so positions expire inside the judged window and rotate,
+            # faster take-profit, more slots so it never blocks. Diversification
+            # (per-underlying cap) intact; max loss still defined-risk.
             - name: MAX_OPEN_POSITIONS
-              value: "6"
+              value: "8"
             - name: MAX_PER_UNDERLYING
-              value: "2"
-            - name: EXPIRY_MIN_DAYS
               value: "3"
+            - name: EXPIRY_MIN_DAYS
+              value: "2"
             - name: EXPIRY_MAX_DAYS
-              value: "5"
+              value: "3"
             - name: HARD_TAKE_PROFIT
-              value: "0.60"
+              value: "0.40"
             - name: TRAIL_ACTIVATION
               value: "0.20"
             - name: TRAIL_GIVEBACK

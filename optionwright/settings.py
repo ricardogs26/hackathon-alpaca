@@ -47,14 +47,14 @@ class Settings(BaseSettings):
     underlyings: str = Field(default="SPY,QQQ,IWM", alias="UNDERLYINGS")
     # Exit management: trailing take-profit + stop + hard cap
     stop_loss_mult: float = Field(default=2.0, alias="STOP_LOSS_MULT")
-    hard_take_profit: float = Field(default=0.60, alias="HARD_TAKE_PROFIT")
+    hard_take_profit: float = Field(default=0.40, alias="HARD_TAKE_PROFIT")
     trail_activation: float = Field(default=0.20, alias="TRAIL_ACTIVATION")
     trail_giveback: float = Field(default=0.10, alias="TRAIL_GIVEBACK")
-    expiry_min_days: int = Field(default=3, alias="EXPIRY_MIN_DAYS")   # 3-5 DTE
-    expiry_max_days: int = Field(default=5, alias="EXPIRY_MAX_DAYS")
-    # Risk gates — deployment raised to ~20% (6 positions x ~3.3%) across 3 symbols
-    max_open_positions: int = Field(default=6, alias="MAX_OPEN_POSITIONS")
-    max_per_underlying: int = Field(default=2, alias="MAX_PER_UNDERLYING")  # anti-concentration
+    expiry_min_days: int = Field(default=2, alias="EXPIRY_MIN_DAYS")   # 2-3 DTE (judged sprint)
+    expiry_max_days: int = Field(default=3, alias="EXPIRY_MAX_DAYS")
+    # Risk gates — judged sprint: 8 slots x ~3.3%, max 3 per symbol (diversified)
+    max_open_positions: int = Field(default=8, alias="MAX_OPEN_POSITIONS")
+    max_per_underlying: int = Field(default=3, alias="MAX_PER_UNDERLYING")  # anti-concentration
     max_loss_pct: float = Field(default=0.033, alias="MAX_LOSS_PCT")
     cooldown_seconds: float = Field(default=2700.0, alias="COOLDOWN_SECONDS")  # 45 min
     daily_budget_pct: float = Field(default=0.22, alias="DAILY_BUDGET_PCT")
