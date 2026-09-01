@@ -24,6 +24,7 @@ class RuleSet:
     max_consecutive_losses: int = 3
     opening_blackout_minutes: float = 30.0
     macro_blackout_minutes: float = 60.0
+    min_confidence: float = 0.6         # only open when the LLM is at least this sure
 
 
 @dataclass(frozen=True)

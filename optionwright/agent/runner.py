@@ -141,6 +141,7 @@ def _build_deps() -> Deps:
             max_loss_pct=s.max_loss_pct,
             cooldown_seconds=s.cooldown_seconds,
             daily_budget_pct=s.daily_budget_pct,
+            min_confidence=s.min_confidence,
         ),
         signals=lambda u, e: perception.compute_signals(
             alpaca.recent_bars(u), alpaca.get_spot(u),

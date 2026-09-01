@@ -45,6 +45,21 @@ class _Recorder:
         )
 
 
+def test_low_confidence_is_vetoed():
+    rec = _Recorder()
+    res = run_cycle("SPY", rec.deps(Proposal(Direction.BULLISH, 0.4, "weak edge")))
+    assert res["action"] == "vetoed"
+    assert "confidence" in res["reason"].lower()
+    assert rec.submitted == []
+
+
+def test_opened_result_carries_confidence():
+    rec = _Recorder()
+    res = run_cycle("SPY", rec.deps(Proposal(Direction.BULLISH, 0.7, "uptrend")))
+    assert res["action"] == "opened"
+    assert res["confidence"] == 0.7
+
+
 def test_bullish_opens_a_position():
     rec = _Recorder()
     res = run_cycle("SPY", rec.deps(Proposal(Direction.BULLISH, 0.7, "uptrend")))

@@ -36,3 +36,15 @@ def test_record_cycle_abstain_no_position():
     b_pos = _val(metrics.POSITIONS_OPENED, underlying="SPY", direction="bullish")
     metrics.record_cycle({"action": "abstain", "underlying": "SPY"})
     assert _val(metrics.POSITIONS_OPENED, underlying="SPY", direction="bullish") == b_pos
+
+
+def test_opened_sets_confidence_opened_gauge():
+    metrics.record_cycle({"action": "opened", "underlying": "SPY", "direction": "bullish", "confidence": 0.72})
+    assert metrics.CONFIDENCE_OPENED._value.get() == 0.72
+
+
+def test_abstain_does_not_touch_confidence_opened():
+    metrics.CONFIDENCE_OPENED.set(0.72)
+    metrics.record_cycle({"action": "abstain", "underlying": "SPY"})
+    # an abstention must NOT overwrite the last-traded confidence
+    assert metrics.CONFIDENCE_OPENED._value.get() == 0.72

@@ -278,7 +278,7 @@ data:
         },
         {
           "id": 6,
-          "title": "LLM confidence (last)",
+          "title": "LLM confidence (on trades)",
           "type": "gauge",
           "gridPos": {
             "x": 16,
@@ -289,7 +289,7 @@ data:
           "datasource": null,
           "targets": [
             {
-              "expr": "max(optionwright_llm_confidence)",
+              "expr": "max(optionwright_confidence_opened)",
               "datasource": null,
               "refId": "A"
             }

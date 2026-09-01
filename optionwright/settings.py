@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     max_loss_pct: float = Field(default=0.033, alias="MAX_LOSS_PCT")
     cooldown_seconds: float = Field(default=2700.0, alias="COOLDOWN_SECONDS")  # 45 min
     daily_budget_pct: float = Field(default=0.22, alias="DAILY_BUDGET_PCT")
+    min_confidence: float = Field(default=0.6, alias="MIN_CONFIDENCE")  # only open when the LLM is this sure
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     # Contexto agéntico: percepción + memoria + portafolio inyectados al LLM

@@ -30,7 +30,11 @@ LLM_LATENCY = Histogram(
 )
 LLM_CONFIDENCE = Gauge(
     "optionwright_llm_confidence",
-    "Confidence of the most recent proposal",
+    "Confidence of the most recent proposal (any outcome, incl. abstain)",
+)
+CONFIDENCE_OPENED = Gauge(
+    "optionwright_confidence_opened",
+    "Confidence of the last proposal that actually opened a position",
 )
 
 # ── Trading ───────────────────────────────────────────────────────────────────
@@ -111,6 +115,9 @@ def record_cycle(result: dict) -> None:
         POSITIONS_OPENED.labels(
             underlying=result.get("underlying", "?"), direction=direction
         ).inc()
+        conf = result.get("confidence")
+        if conf is not None:
+            CONFIDENCE_OPENED.set(conf)
 
 
 def record_decision(direction: str) -> None:

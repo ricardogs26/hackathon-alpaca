@@ -99,6 +99,14 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
                              False, 0, reason, chosen)
         return {"underlying": underlying, "action": "abstain", "reason": reason}
 
+    # Confidence gate: only trade when the LLM is convinced. Below the floor we
+    # veto — the direction alone is not enough to put money on the line.
+    if proposal.confidence < rules.min_confidence:
+        reason = f"low confidence {proposal.confidence:.2f} < {rules.min_confidence:.2f}"
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
+                             False, 0, reason, chosen)
+        return {"underlying": underlying, "action": "vetoed", "reason": reason}
+
     state = deps.build_state(underlying, equity)
     verdict = evaluate(chosen, _SIZE_CEILING, state, rules)
     if not verdict.approved:
@@ -113,4 +121,5 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
                          True, verdict.contracts, verdict.reason, chosen, pos_id)
     logger.info("cycle %s -> %s x%d (%s)", underlying, proposal.direction.value, verdict.contracts, order_id)
     return {"underlying": underlying, "action": "opened", "contracts": verdict.contracts,
-            "direction": proposal.direction.value, "order_id": order_id, "position_id": pos_id}
+            "direction": proposal.direction.value, "confidence": proposal.confidence,
+            "order_id": order_id, "position_id": pos_id}
