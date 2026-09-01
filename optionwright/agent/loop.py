@@ -23,6 +23,16 @@ logger = logging.getLogger("optionwright.loop")
 _SIZE_CEILING = 100  # gates shrink from here; never the source of sizing
 
 
+def _safe(fn) -> dict:
+    """Ejecuta un proveedor de contexto; degrada a {} ante cualquier fallo."""
+    try:
+        out = fn()
+        return out if isinstance(out, dict) else {}
+    except Exception as exc:  # el contexto enriquecido nunca rompe el ciclo
+        logger.warning("rich context provider failed: %s", exc)
+        return {}
+
+
 @dataclass
 class Deps:
     account: Callable[[], tuple[float, float]]                 # -> (equity, cash)
@@ -35,6 +45,10 @@ class Deps:
     record_position: Callable[[VerticalSpread, int, str | None], int]
     save_equity: Callable[[float, float], None]
     rules: RuleSet = None  # type: ignore[assignment]
+    signals: Callable[[str, str], dict] = None       # (underlying, expiry) -> señales
+    memory: Callable[[str], dict] = None             # (underlying) -> resultados recientes
+    book: Callable[[], dict] = None                  # -> resumen de portafolio
+    rich_context: bool = False
 
 
 def _candidate_summary(spread: VerticalSpread | None) -> dict | None:
@@ -72,6 +86,10 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
         "bull_put_spread": _candidate_summary(bull_put),
         "bear_call_spread": _candidate_summary(bear_call),
     }
+    if deps.rich_context and deps.signals and deps.memory and deps.book:
+        context["signals"] = _safe(lambda: deps.signals(underlying, expiry))
+        context["memoria"] = _safe(lambda: deps.memory(underlying))
+        context["portafolio"] = _safe(deps.book)
     proposal = deps.propose(context)
 
     chosen = bull_put if proposal.direction is Direction.BULLISH else bear_call if proposal.direction is Direction.BEARISH else None
