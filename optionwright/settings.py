@@ -44,18 +44,20 @@ class Settings(BaseSettings):
 
     # ── Agent behavior ────────────────────────────────────────────────────────
     cycle_seconds: int = Field(default=300, alias="CYCLE_SECONDS")
-    underlyings: str = Field(default="SPY,QQQ", alias="UNDERLYINGS")
-    # Exit management
-    take_profit_pct: float = Field(default=0.40, alias="TAKE_PROFIT_PCT")
+    underlyings: str = Field(default="SPY,QQQ,IWM", alias="UNDERLYINGS")
+    # Exit management: trailing take-profit + stop + hard cap
     stop_loss_mult: float = Field(default=2.0, alias="STOP_LOSS_MULT")
-    expiry_min_days: int = Field(default=3, alias="EXPIRY_MIN_DAYS")   # target 3-5 DTE
-    expiry_max_days: int = Field(default=7, alias="EXPIRY_MAX_DAYS")
-    # Risk gates (deployment increases capital-at-risk moderately for the contest)
-    max_open_positions: int = Field(default=5, alias="MAX_OPEN_POSITIONS")
+    hard_take_profit: float = Field(default=0.60, alias="HARD_TAKE_PROFIT")
+    trail_activation: float = Field(default=0.20, alias="TRAIL_ACTIVATION")
+    trail_giveback: float = Field(default=0.10, alias="TRAIL_GIVEBACK")
+    expiry_min_days: int = Field(default=3, alias="EXPIRY_MIN_DAYS")   # 3-5 DTE
+    expiry_max_days: int = Field(default=5, alias="EXPIRY_MAX_DAYS")
+    # Risk gates — deployment raised to ~20% (6 positions x ~3.3%) across 3 symbols
+    max_open_positions: int = Field(default=6, alias="MAX_OPEN_POSITIONS")
     max_per_underlying: int = Field(default=2, alias="MAX_PER_UNDERLYING")  # anti-concentration
-    max_loss_pct: float = Field(default=0.015, alias="MAX_LOSS_PCT")
+    max_loss_pct: float = Field(default=0.033, alias="MAX_LOSS_PCT")
     cooldown_seconds: float = Field(default=2700.0, alias="COOLDOWN_SECONDS")  # 45 min
-    daily_budget_pct: float = Field(default=0.10, alias="DAILY_BUDGET_PCT")
+    daily_budget_pct: float = Field(default=0.22, alias="DAILY_BUDGET_PCT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     model_config = {

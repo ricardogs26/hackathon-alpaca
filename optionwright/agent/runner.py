@@ -71,7 +71,12 @@ def manage_positions() -> list[dict]:
     from optionwright.storage import store
 
     s = get_settings()
-    params = ExitParams(take_profit_pct=s.take_profit_pct, stop_mult=s.stop_loss_mult)
+    params = ExitParams(
+        stop_mult=s.stop_loss_mult,
+        hard_take_profit=s.hard_take_profit,
+        trail_activation=s.trail_activation,
+        trail_giveback=s.trail_giveback,
+    )
     today = date.today().isoformat()
     results = []
 
@@ -87,8 +92,13 @@ def manage_positions() -> list[dict]:
                 continue
             credit = float(pos["credit"])
             is_expiry_day = str(pos["expiry"]) <= today
-            decision = decide_exit(credit, price, is_expiry_day, params)
-            captured_pct = (credit - price) / credit * 100 if credit > 0 else 0.0
+            captured = (credit - price) / credit if credit > 0 else 0.0
+            # Update and read the high-water mark before deciding on the trail.
+            peak = max(float(pos.get("peak_captured") or 0.0), captured)
+            if peak > float(pos.get("peak_captured") or 0.0):
+                store.update_peak_captured(pos["id"], peak)
+            decision = decide_exit(credit, price, is_expiry_day, peak_captured=peak, params=params)
+            captured_pct = captured * 100
             pnl_now = round((credit - price) * 100 * pos["contracts"], 2)
             # Surface the live evaluation as a Grafana table row.
             metrics.set_position_info(

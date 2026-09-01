@@ -87,6 +87,15 @@ def close_position(position_id: int, realized_pnl: float, exit_reason: str) -> N
     metrics.record_realized_pnl(realized_pnl)
 
 
+def update_peak_captured(position_id: int, captured: float) -> None:
+    """Raise the position's high-water mark (never lowers it)."""
+    with _conn() as c:
+        c.execute(
+            "UPDATE positions SET peak_captured = GREATEST(coalesce(peak_captured,0), %s) WHERE id=%s",
+            (captured, position_id),
+        )
+
+
 def save_equity(equity: float, cash: float | None) -> None:
     from optionwright import metrics
 
@@ -114,7 +123,8 @@ def get_positions(limit: int = 50) -> list[dict]:
     with _conn() as c:
         cur = c.execute(
             "SELECT id, ts_open, underlying, option_right, expiry, short_symbol, long_symbol,"
-            " contracts, credit, max_loss, status, realized_pnl, exit_reason"
+            " contracts, credit, max_loss, status, realized_pnl, exit_reason,"
+            " coalesce(peak_captured,0) AS peak_captured"
             " FROM positions ORDER BY ts_open DESC LIMIT %s", (limit,)
         )
         rows = _rows(cur)

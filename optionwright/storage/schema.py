@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS positions (
 );
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_positions_underlying ON positions(underlying);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS peak_captured DOUBLE PRECISION DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS equity_curve (
     ts       TIMESTAMPTZ NOT NULL DEFAULT now(),

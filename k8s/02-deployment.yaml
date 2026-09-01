@@ -60,24 +60,32 @@ spec:
               valueFrom: { secretKeyRef: { name: optionwright-secrets, key: POSTGRES_PASSWORD } }
             # Agent behavior
             - name: UNDERLYINGS
-              value: "SPY,QQQ"
+              value: "SPY,QQQ,IWM"
             - name: CYCLE_SECONDS
               value: "120"
             - name: LOG_LEVEL
               value: "INFO"
             # Risk / strategy tuning (moderate deployment increase for the contest)
             - name: MAX_OPEN_POSITIONS
-              value: "5"
+              value: "6"
             - name: MAX_PER_UNDERLYING
               value: "2"
+            - name: EXPIRY_MIN_DAYS
+              value: "3"
+            - name: EXPIRY_MAX_DAYS
+              value: "5"
+            - name: HARD_TAKE_PROFIT
+              value: "0.60"
+            - name: TRAIL_ACTIVATION
+              value: "0.20"
+            - name: TRAIL_GIVEBACK
+              value: "0.10"
             - name: MAX_LOSS_PCT
-              value: "0.015"
+              value: "0.033"
             - name: COOLDOWN_SECONDS
               value: "2700"
             - name: DAILY_BUDGET_PCT
-              value: "0.10"
-            - name: TAKE_PROFIT_PCT
-              value: "0.40"
+              value: "0.22"
           readinessProbe:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5
