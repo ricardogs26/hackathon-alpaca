@@ -121,9 +121,9 @@ DASHBOARD_HTML = r"""<!doctype html>
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <h2 style="margin:0">Account equity</h2>
         <div id="eqranges" style="display:inline-flex;gap:4px">
-          <button class="fbtn on" data-d="7">7D</button>
-          <button class="fbtn" data-d="30">30D</button>
-          <button class="fbtn" data-d="999">Todo</button>
+          <button class="fbtn on" data-r="week">5D</button>
+          <button class="fbtn" data-r="30">30D</button>
+          <button class="fbtn" data-r="all">All</button>
         </div>
       </div>
       <div class="big" id="equity" style="margin-top:12px">—</div>
@@ -186,7 +186,7 @@ function spark(pts){
   // Adaptive bands: one per DAY when few, per WEEK when many, so 20-30+ days
   // never crowd. Weekends have no equity points, so they never get a band.
   const byWeek = pts.length>10;
-  const keyOf = p => byWeek ? _weekKey(p.ts.slice(0,10)) : p.ts.slice(0,10);
+  const keyOf = p => byWeek ? _weekKey(p.date) : p.date;
   const segs=[]; let start=0;
   for(let i=1;i<=pts.length;i++){
     if(i===pts.length || keyOf(pts[i])!==keyOf(pts[i-1])){ segs.push({key:keyOf(pts[start]),a:start,b:i-1}); start=i; }
@@ -216,19 +216,27 @@ function spark(pts){
      <circle cx="${x(pts.length-1).toFixed(1)}" cy="${y(ys[ys.length-1]).toFixed(1)}" r="3.2" fill="${col}"/>`;
 }
 
-let _eqAll = [], _eqRange = 7;
+let _eqAll = [], _eqRange = 'week';
+function _windowed(all){
+  if(_eqRange==='all') return all;
+  if(_eqRange==='30') return all.slice(-30);
+  const mon=_weekKey(all[all.length-1].date);   // Monday of the latest point's week
+  return all.filter(p=>p.date>=mon);            // week-to-date (Mon..today)
+}
 function drawEquity(){
   if(!_eqAll.length) return;
   const last=_eqAll[_eqAll.length-1].equity, base=100000, pnl=last-base, pct=pnl/base*100;
   $('equity').textContent = money(last);
   $('pnl').innerHTML = `<span class="${pnl>=0?'up':'down'}">${pnl>=0?'+':''}${money(pnl)} (${pnl>=0?'+':''}${pct.toFixed(2)}%)</span> since $100k start`;
-  const pts = _eqRange>=999 ? _eqAll : _eqAll.slice(-_eqRange);
+  const pts = _windowed(_eqAll);
   spark(pts);
+  const lbl = _eqRange==='week' ? 'This week' : _eqRange==='30' ? 'Last 30 days' : 'All time';
   if(pts.length>=2){
     const chg=pts[pts.length-1].equity-pts[0].equity, cpct=chg/pts[0].equity*100;
-    const lbl=_eqRange>=999?'todo el periodo':`${_eqRange} días`;
-    $('rangepnl').innerHTML=`En este rango (${lbl}): <span class="${chg>=0?'up':'down'}">${chg>=0?'+':''}${money(chg)} (${chg>=0?'+':''}${cpct.toFixed(2)}%)</span>`;
-  } else { $('rangepnl').textContent=''; }
+    $('rangepnl').innerHTML=`${lbl}: <span class="${chg>=0?'up':'down'}">${chg>=0?'+':''}${money(chg)} (${chg>=0?'+':''}${cpct.toFixed(2)}%)</span>`;
+  } else {
+    $('rangepnl').innerHTML=`${lbl}: <span class="sub">only 1 day of data so far</span>`;
+  }
 }
 
 function dirTag(d){
@@ -246,7 +254,7 @@ async function refresh(){
       `<span class="pill">${st.model}</span>`+
       `<span class="pill">${st.paper?'PAPER':'LIVE'}</span>`;
   }
-  const eq = await j('/api/equity?limit=500');
+  const eq = await j('/api/equity/daily?limit=200');
   if(eq && eq.length){ _eqAll = eq; drawEquity(); }
   const pos = await j('/api/positions?limit=50') || [];
   const open = pos.filter(p=>p.status==='open').length, closed = pos.filter(p=>p.status==='closed');
@@ -348,7 +356,7 @@ document.getElementById('decfilters').addEventListener('click', e=>{
 });
 document.getElementById('eqranges').addEventListener('click', e=>{
   const b = e.target.closest('.fbtn'); if(!b) return;
-  _eqRange = +b.dataset.d;
+  _eqRange = b.dataset.r;
   document.querySelectorAll('#eqranges .fbtn').forEach(x=>x.classList.toggle('on', x===b));
   drawEquity();
 });

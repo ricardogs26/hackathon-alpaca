@@ -119,6 +119,19 @@ def get_equity_curve(limit: int = 500) -> list[dict]:
     return [{"ts": r["ts"].isoformat(), "equity": r["equity"], "cash": r["cash"]} for r in rows]
 
 
+def get_equity_daily(limit: int = 120) -> list[dict]:
+    """One row per calendar day: the last equity recorded that day (chronological).
+    The intraday curve has hundreds of points/day; the chart needs one per day."""
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT DISTINCT ON (ts::date) ts::date AS d, equity"
+            " FROM equity_curve ORDER BY ts::date DESC, ts DESC LIMIT %s", (limit,)
+        )
+        rows = _rows(cur)
+    rows.reverse()  # chronological for charting
+    return [{"date": str(r["d"]), "equity": r["equity"]} for r in rows]
+
+
 def get_positions(limit: int = 50) -> list[dict]:
     with _conn() as c:
         cur = c.execute(

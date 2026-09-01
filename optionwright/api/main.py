@@ -107,6 +107,15 @@ def equity(limit: int = 500) -> list[dict]:
     return _cached(f"equity:{limit}", lambda: store.get_equity_curve(limit))
 
 
+@app.get("/api/equity/daily")
+def equity_daily(limit: int = 120) -> list[dict]:
+    """One equity point per calendar day (the day's last value) — for the chart."""
+    from optionwright.storage import store
+
+    limit = max(1, min(limit, 400))
+    return _cached(f"equity_daily:{limit}", lambda: store.get_equity_daily(limit))
+
+
 @app.get("/api/positions")
 def positions(limit: int = 50) -> list[dict]:
     from optionwright.storage import store
