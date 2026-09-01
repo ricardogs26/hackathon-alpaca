@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 
+from optionwright.agent import perception
 from optionwright.agent.analyzer import propose
 from optionwright.agent.loop import Deps, run_cycle
 from optionwright.broker import alpaca
@@ -141,6 +142,14 @@ def _build_deps() -> Deps:
             cooldown_seconds=s.cooldown_seconds,
             daily_budget_pct=s.daily_budget_pct,
         ),
+        signals=lambda u, e: perception.compute_signals(
+            alpaca.recent_bars(u), alpaca.get_spot(u),
+            trend_flat_pct=s.perception_trend_flat_pct,
+            vol_high_pct=s.perception_vol_high_pct,
+        ),
+        memory=lambda u: store.recent_outcomes(u),
+        book=store.book_summary,
+        rich_context=s.agent_rich_context,
     )
 
 

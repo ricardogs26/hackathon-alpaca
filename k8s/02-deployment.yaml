@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: optionwright
-          image: registry.richardx.dev/optionwright:0.1.18
+          image: registry.richardx.dev/optionwright:0.1.19
           ports:
             - containerPort: 8080
           env:
@@ -89,6 +89,8 @@ spec:
               value: "2700"
             - name: DAILY_BUDGET_PCT
               value: "0.22"
+            - name: AGENT_RICH_CONTEXT
+              value: "true"
           readinessProbe:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5

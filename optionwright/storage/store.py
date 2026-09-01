@@ -156,6 +156,71 @@ def _consecutive_losses(realized_pnls_desc: list[float]) -> int:
     return n
 
 
+def _summarize_outcomes(rows: list[dict]) -> dict:
+    """Resumen de trades cerrados por dirección (call=bajista, put=alcista)."""
+    closed = [r for r in rows if r.get("realized_pnl") is not None]
+
+    def won(r):
+        return r["realized_pnl"] > 0
+
+    return {
+        "cerradas": len(closed),
+        "ganadas_bajista": sum(1 for r in closed if r["option_right"] == "call" and won(r)),
+        "ganadas_alcista": sum(1 for r in closed if r["option_right"] == "put" and won(r)),
+        "perdidas": sum(1 for r in closed if not won(r)),
+    }
+
+
+def _summarize_book(open_rows: list[dict], pnl_dia: float, consec_losses: int) -> dict:
+    """Resumen legible del libro abierto para el contexto del LLM."""
+    from collections import Counter
+
+    by_u = Counter(r["underlying"] for r in open_rows)
+    by_dir = Counter(
+        "bajista" if r["option_right"] == "call" else "alcista" for r in open_rows
+    )
+    conc = by_u.most_common(1)[0][0] if by_u else None
+    return {
+        "abiertas": len(open_rows),
+        "por_subyacente": dict(by_u),
+        "por_direccion": dict(by_dir),
+        "concentracion": conc,
+        "pnl_dia": round(pnl_dia, 2),
+        "perdidas_consecutivas": consec_losses,
+    }
+
+
+def recent_outcomes(underlying: str, limit: int = 5) -> dict:
+    """Resumen de los últimos `limit` trades cerrados del subyacente."""
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT underlying, option_right, realized_pnl FROM positions"
+            " WHERE status='closed' AND underlying=%s ORDER BY ts_close DESC LIMIT %s",
+            (underlying, limit),
+        )
+        rows = _rows(cur)
+    return _summarize_outcomes(rows)
+
+
+def book_summary() -> dict:
+    """Resumen del libro abierto + P&L del día + racha de pérdidas."""
+    with _conn() as c:
+        open_cur = c.execute(
+            "SELECT underlying, option_right FROM positions WHERE status='open'"
+        )
+        open_rows = _rows(open_cur)
+        pnl_dia = c.execute(
+            "SELECT coalesce(sum(realized_pnl),0) FROM positions"
+            " WHERE status='closed' AND ts_close::date = now()::date"
+        ).fetchone()[0]
+        pnls = c.execute(
+            "SELECT realized_pnl FROM positions WHERE status='closed'"
+            " ORDER BY ts_close DESC LIMIT 20"
+        ).fetchall()
+    consec = _consecutive_losses([p[0] for p in pnls])
+    return _summarize_book(open_rows, float(pnl_dia), consec)
+
+
 def build_policy_state(
     underlying: str,
     equity: float,

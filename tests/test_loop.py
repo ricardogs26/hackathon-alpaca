@@ -81,3 +81,43 @@ def test_bearish_uses_call_spread():
     assert res["action"] == "opened"
     spread, n = rec.submitted[0]
     assert spread.right is Right.CALL
+
+
+def test_rich_context_injects_signals_memory_book():
+    rec = _Recorder()
+    captured = {}
+    deps = rec.deps(Proposal(Direction.ABSTAIN, 0.5, "x"))
+    deps.propose = lambda ctx: captured.update(ctx) or Proposal(Direction.ABSTAIN, 0.5, "x")
+    deps.signals = lambda u, e: {"tendencia_5d": "baja"}
+    deps.memory = lambda u: {"cerradas": 3}
+    deps.book = lambda: {"abiertas": 2, "concentracion": "SPY"}
+    deps.rich_context = True
+    run_cycle("SPY", deps)
+    assert captured["signals"] == {"tendencia_5d": "baja"}
+    assert captured["memoria"] == {"cerradas": 3}
+    assert captured["portafolio"]["concentracion"] == "SPY"
+
+
+def test_rich_context_off_adds_no_keys():
+    rec = _Recorder()
+    captured = {}
+    deps = rec.deps(Proposal(Direction.ABSTAIN, 0.5, "x"))
+    deps.propose = lambda ctx: captured.update(ctx) or Proposal(Direction.ABSTAIN, 0.5, "x")
+    run_cycle("SPY", deps)
+    assert "signals" not in captured
+
+
+def test_rich_context_degrades_on_error():
+    rec = _Recorder()
+    captured = {}
+    deps = rec.deps(Proposal(Direction.ABSTAIN, 0.5, "x"))
+    deps.propose = lambda ctx: captured.update(ctx) or Proposal(Direction.ABSTAIN, 0.5, "x")
+    def boom(*a):
+        raise RuntimeError("alpaca down")
+    deps.signals = boom
+    deps.memory = lambda u: {"cerradas": 0}
+    deps.book = lambda: {"abiertas": 0}
+    deps.rich_context = True
+    run_cycle("SPY", deps)
+    assert captured["signals"] == {}          # degradó, no rompió
+    assert captured["memoria"] == {"cerradas": 0}
