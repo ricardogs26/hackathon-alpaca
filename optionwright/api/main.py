@@ -103,7 +103,7 @@ def _cached(key: str, fn):
 def equity(limit: int = 500) -> list[dict]:
     from optionwright.storage import store
 
-    limit = max(1, min(limit, 1000))
+    limit = max(1, min(limit, 5000))
     return _cached(f"equity:{limit}", lambda: store.get_equity_curve(limit))
 
 

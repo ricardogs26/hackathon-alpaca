@@ -170,6 +170,7 @@ const money = n => '$'+fmt(n);
 async function j(u){ try{ const r=await fetch(u); return await r.json(); }catch(e){ return null; } }
 
 const MES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const _dOf = p => p.date || (p.ts ? p.ts.slice(0,10) : '');  // date string of a point
 function _weekKey(iso){  // Monday of that ISO date's week, as YYYY-MM-DD
   const [Y,M,D]=iso.split('-').map(Number);
   const dt=new Date(Date.UTC(Y,M-1,D));
@@ -185,8 +186,10 @@ function spark(pts){
   const y=v=>Hc-pad-((v-min)/rng)*(Hc-2*pad);
   // Adaptive bands: one per DAY when few, per WEEK when many, so 20-30+ days
   // never crowd. Weekends have no equity points, so they never get a band.
-  const byWeek = pts.length>10;
-  const keyOf = p => byWeek ? _weekKey(p.date) : p.date;
+  // Band granularity by number of distinct DAYS shown, not by point count
+  // (the intraday week view has hundreds of points across only a few days).
+  const byWeek = new Set(pts.map(_dOf)).size > 10;
+  const keyOf = p => byWeek ? _weekKey(_dOf(p)) : _dOf(p);
   const segs=[]; let start=0;
   for(let i=1;i<=pts.length;i++){
     if(i===pts.length || keyOf(pts[i])!==keyOf(pts[i-1])){ segs.push({key:keyOf(pts[start]),a:start,b:i-1}); start=i; }
@@ -216,19 +219,25 @@ function spark(pts){
      <circle cx="${x(pts.length-1).toFixed(1)}" cy="${y(ys[ys.length-1]).toFixed(1)}" r="3.2" fill="${col}"/>`;
 }
 
-let _eqAll = [], _eqRange = 'week';
-function _windowed(all){
-  if(_eqRange==='all') return all;
-  if(_eqRange==='30') return all.slice(-30);
-  const mon=_weekKey(all[all.length-1].date);   // Monday of the latest point's week
-  return all.filter(p=>p.date>=mon);            // week-to-date (Mon..today)
-}
+let _eqIntra = [], _eqDaily = [], _eqRange = 'week';
 function drawEquity(){
-  if(!_eqAll.length) return;
-  const last=_eqAll[_eqAll.length-1].equity, base=100000, pnl=last-base, pct=pnl/base*100;
+  // Headline = latest live equity (intraday is freshest; fall back to daily).
+  const latest = (_eqIntra.length ? _eqIntra : _eqDaily);
+  if(!latest.length) return;
+  const last=latest[latest.length-1].equity, pnl=last-100000, pct=pnl/1000;
   $('equity').textContent = money(last);
   $('pnl').innerHTML = `<span class="${pnl>=0?'up':'down'}">${pnl>=0?'+':''}${money(pnl)} (${pnl>=0?'+':''}${pct.toFixed(2)}%)</span> since $100k start`;
-  const pts = _windowed(_eqAll);
+  // Week view uses the DENSE intraday curve (keeps the ups/downs detail);
+  // 30D / All use one point per day (intraday would be too many points).
+  let pts;
+  if(_eqRange==='week' && _eqIntra.length){
+    const mon=_weekKey(_dOf(_eqIntra[_eqIntra.length-1]));
+    pts=_eqIntra.filter(p=>_dOf(p)>=mon);
+  } else if(_eqRange==='30'){
+    pts=_eqDaily.slice(-30);
+  } else {
+    pts=_eqDaily;
+  }
   spark(pts);
   const lbl = _eqRange==='week' ? 'This week' : _eqRange==='30' ? 'Last 30 days' : 'All time';
   if(pts.length>=2){
@@ -254,8 +263,10 @@ async function refresh(){
       `<span class="pill">${st.model}</span>`+
       `<span class="pill">${st.paper?'PAPER':'LIVE'}</span>`;
   }
-  const eq = await j('/api/equity/daily?limit=200');
-  if(eq && eq.length){ _eqAll = eq; drawEquity(); }
+  const [intra, daily] = await Promise.all([j('/api/equity?limit=5000'), j('/api/equity/daily?limit=200')]);
+  if(intra) _eqIntra = intra;
+  if(daily) _eqDaily = daily;
+  if(_eqIntra.length || _eqDaily.length) drawEquity();
   const pos = await j('/api/positions?limit=50') || [];
   const open = pos.filter(p=>p.status==='open').length, closed = pos.filter(p=>p.status==='closed');
   _closedPos = closed;
