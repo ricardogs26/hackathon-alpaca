@@ -5,6 +5,16 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.2.2 — 2026-09-02 · clearer stream filters, market badge
+
+- Stream filters renamed **Entries / Exits** (they are events in time, not a
+  status list — "Opened" read as "currently open"), plus a new **Open now**
+  filter for the entries whose position is still open. Subtitle: "every action
+  the agent took, in order".
+- Header badge: **market open** (green dot) / **market closed** (grey dot) from
+  Alpaca's clock via `/api/status` (cached 10s, degrades to no badge if the
+  broker is unreachable); hover shows next open/close in ET.
+
 ## 0.2.1 — 2026-09-02 · the decision stream keeps every open
 
 - **Fix:** the "Opened" filter came up empty. Open events were built from the

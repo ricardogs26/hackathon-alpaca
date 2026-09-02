@@ -67,14 +67,32 @@ def metrics_endpoint():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+def _market_clock() -> dict:
+    """Alpaca's market clock for the header badge. Cached by the caller; any
+    failure degrades to None so the status endpoint never depends on Alpaca."""
+    try:
+        from optionwright.broker import alpaca
+
+        c = alpaca._trading_client().get_clock()
+        return {"is_open": bool(c.is_open), "next_open": c.next_open.isoformat(),
+                "next_close": c.next_close.isoformat()}
+    except Exception as exc:  # keep /api/status up even if the broker is not
+        logger.warning("market clock unavailable: %s", exc)
+        return {"is_open": None, "next_open": None, "next_close": None}
+
+
 @app.get("/api/status")
 def status() -> dict:
     s = get_settings()
     running = bool(_scheduler and _scheduler.running)
+    clock = _cached("clock", _market_clock)
     return {
         "service": "optionwright",
         "version": __version__,
         "scheduler_running": running,
+        "market_open": clock["is_open"],
+        "next_open": clock["next_open"],
+        "next_close": clock["next_close"],
         "cycle_seconds": s.cycle_seconds,
         "underlyings": s.underlyings_list,
         "model": s.llm_model,

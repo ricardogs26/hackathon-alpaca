@@ -103,6 +103,9 @@ DASHBOARD_HTML = r"""<!doctype html>
   @keyframes bl{50%{opacity:0}}
   .streamfoot{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;
     justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--ink3);font:500 .74rem/1 var(--mono)}
+  .subt{color:var(--ink3);font:500 .64rem/1 var(--mono);letter-spacing:.04em;text-transform:none;margin-left:10px}
+  .pill .dot{width:7px;height:7px;margin-right:5px;vertical-align:1px;box-shadow:none}
+  .dot.off{background:var(--ink3);box-shadow:none}
   .badgeNEW{font:600 .58rem/1 var(--mono);letter-spacing:.1em;color:#0e1613;background:var(--acc);
     border-radius:4px;padding:3px 6px;margin-left:8px;vertical-align:middle}
 </style>
@@ -142,13 +145,14 @@ DASHBOARD_HTML = r"""<!doctype html>
     </div>
     <div class="card wide">
       <div class="streamhead">
-        <h2 style="margin:0">Live Decision Stream<span class="badgeNEW">LIVE</span></h2>
+        <h2 style="margin:0">Live Decision Stream<span class="badgeNEW">LIVE</span><span class="subt">every action the agent took, in order</span></h2>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <span class="livechip"><span class="dot"></span>LIVE · 120s</span>
           <div id="decfilters" style="display:inline-flex;gap:0;flex-wrap:wrap">
             <button class="fbtn on" data-f="all">All</button>
-            <button class="fbtn" data-f="opened">Opened</button>
-            <button class="fbtn" data-f="closed">Closed</button>
+            <button class="fbtn" data-f="opened">Entries</button>
+            <button class="fbtn" data-f="opennow">Open now</button>
+            <button class="fbtn" data-f="closed">Exits</button>
             <button class="fbtn" data-f="vetoed">Vetoed</button>
             <button class="fbtn" data-f="abstain">Abstain</button>
             <button class="fbtn" data-f="SPY">SPY</button>
@@ -254,6 +258,8 @@ async function refresh(){
   if(st){
     $('status').innerHTML =
       `<span class="dot"></span><span class="pill">${st.scheduler_running?'running':'stopped'}</span>`+
+      (st.market_open===true ? `<span class="pill" title="closes ${(st.next_close||'').slice(11,16)} ET"><span class="dot"></span>market open</span>`
+       : st.market_open===false ? `<span class="pill" title="next open ${(st.next_open||'').slice(11,16)} ET"><span class="dot off"></span>market closed</span>` : '')+
       `<span class="pill">${st.underlyings.join(' · ')}</span>`+
       `<span class="pill">${st.model}</span>`+
       `<span class="pill">${st.paper?'PAPER':'LIVE'}</span>`;
@@ -312,7 +318,7 @@ function buildEvents(){
   for(const p of _allPos){
     ev.push({t:p.ts_open, u:p.underlying, kind:'open',
              dir:p.option_right==='call'?'bearish':'bullish', conf:p.open_confidence,
-             contracts:p.contracts, credit:p.credit});
+             contracts:p.contracts, credit:p.credit, open:p.status==='open'});
     if(p.status==='closed'){
       ev.push({t:p.ts_close||p.ts_open, u:p.underlying, kind:'close',
                reason:p.exit_reason||'exit by rule', pnl:p.realized_pnl});
@@ -325,6 +331,7 @@ function matchFilter(e){
   if(_decFilter==='all') return true;
   if(_decFilter==='SPY'||_decFilter==='QQQ'||_decFilter==='IWM') return e.u===_decFilter;
   if(_decFilter==='opened') return e.kind==='open';
+  if(_decFilter==='opennow') return e.kind==='open' && e.open;
   if(_decFilter==='closed') return e.kind==='close';
   if(_decFilter==='vetoed') return e.kind==='veto';
   if(_decFilter==='abstain') return e.kind==='abstain';
