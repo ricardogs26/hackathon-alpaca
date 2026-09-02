@@ -20,11 +20,25 @@ logging.basicConfig(level=get_settings().log_level)
 _scheduler = None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def build_scheduler(s, run_exits, run_entries):
+    """Two jobs on two clocks: exits every EXIT_CHECK_SECONDS (cheap: one quote
+    per open position) and entries every CYCLE_SECONDS (chains + LLM + gates).
+    max_instances=1 per job so a slow pass never overlaps itself; the exits
+    pass additionally holds a lock (runner) so two never act on one position.
+    Built here, unstarted, so the wiring is unit-testable without threads."""
     from apscheduler.schedulers.background import BackgroundScheduler
 
-    from optionwright.agent.runner import run_once
+    sched = BackgroundScheduler(timezone="UTC")
+    sched.add_job(run_entries, "interval", seconds=s.cycle_seconds, id="entries",
+                  max_instances=1, coalesce=True)
+    sched.add_job(run_exits, "interval", seconds=s.exit_check_seconds, id="exits",
+                  max_instances=1, coalesce=True)
+    return sched
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from optionwright.agent.runner import run_entries, run_exits
     from optionwright.storage import store
 
     s = get_settings()
@@ -41,11 +55,10 @@ async def lifespan(app: FastAPI):
         logger.warning("startup DB step deferred: %s", exc)
 
     global _scheduler
-    _scheduler = BackgroundScheduler(timezone="UTC")
-    _scheduler.add_job(run_once, "interval", seconds=s.cycle_seconds, id="cycle",
-                       max_instances=1, coalesce=True)
+    _scheduler = build_scheduler(s, run_exits, run_entries)
     _scheduler.start()
-    logger.info("scheduler started: every %ds over %s", s.cycle_seconds, s.underlyings_list)
+    logger.info("scheduler started: entries every %ds, exits every %ds, over %s",
+                s.cycle_seconds, s.exit_check_seconds, s.underlyings_list)
     yield
     if _scheduler:
         _scheduler.shutdown(wait=False)
@@ -94,6 +107,7 @@ def status() -> dict:
         "next_open": clock["next_open"],
         "next_close": clock["next_close"],
         "cycle_seconds": s.cycle_seconds,
+        "exit_check_seconds": s.exit_check_seconds,
         "underlyings": s.underlyings_list,
         "model": s.llm_model,
         "paper": s.alpaca_paper,

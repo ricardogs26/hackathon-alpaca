@@ -1,11 +1,23 @@
 """
-Runner: wires the real broker / analyzer / storage into Deps and runs one cycle
-per underlying. The scheduler (in service.py) calls run_once on an interval; this
-module is the seam between the pure pipeline (loop.run_cycle) and live services.
+Runner: wires the real broker / analyzer / storage into Deps and runs the agent.
+Two entry points on two clocks (see api/main.build_scheduler):
+
+  run_exits()   every EXIT_CHECK_SECONDS (60s)  - manage open positions only:
+                take-profit, trailing, stop, expiry. Cheap (one quote per open
+                position, no chain, no LLM), so it can run often and the trailing
+                give-back stays close to what is configured.
+  run_entries() every CYCLE_SECONDS (180s)      - the full decision pass: chains,
+                LLM, gates, execution.
+
+run_once() keeps the old single-pass shape (exits then entries) for dry runs.
+This module is the seam between the pure pipeline (loop.run_cycle) and live
+services.
 """
 from __future__ import annotations
 
 import logging
+import threading
+import time
 
 from optionwright.agent import perception
 from optionwright.agent.analyzer import propose
@@ -23,9 +35,21 @@ def _account() -> tuple[float, float]:
     return float(acct.equity), float(acct.cash)
 
 
+_CLOCK_TTL = 15.0                       # seconds; two jobs share one clock read
+_clock_cache: tuple[float, bool] | None = None
+_exit_lock = threading.Lock()           # exits passes never overlap each other
+
+
 def _market_open() -> bool:
-    clock = alpaca._trading_client().get_clock()
-    return bool(clock.is_open)
+    """Alpaca's clock, cached _CLOCK_TTL so the 60s exits job and the 180s
+    entries job don't each hit the broker for the same answer."""
+    global _clock_cache
+    now = time.monotonic()
+    if _clock_cache is not None and now - _clock_cache[0] < _CLOCK_TTL:
+        return _clock_cache[1]
+    is_open = bool(alpaca._trading_client().get_clock().is_open)
+    _clock_cache = (now, is_open)
+    return is_open
 
 
 def _minutes_since_open() -> float | None:
@@ -61,10 +85,22 @@ def _minutes_since_open() -> float | None:
 
 def manage_positions() -> list[dict]:
     """
-    Check every open spread and close it on take-profit, stop-loss, or expiration
-    day. Runs before opening new positions each cycle. Errors on one position
-    never stop the others.
+    Check every open spread and close it on take-profit, trailing, stop-loss, or
+    expiration day. Guarded by a non-blocking lock: if a previous exits pass is
+    still running (slow broker), this tick is skipped instead of overlapping it —
+    two passes must never act on the same position at once.
     """
+    if not _exit_lock.acquire(blocking=False):
+        logger.warning("exits pass already running; skipping this tick")
+        return []
+    try:
+        return _manage_positions()
+    finally:
+        _exit_lock.release()
+
+
+def _manage_positions() -> list[dict]:
+    """The exits pass proper. Errors on one position never stop the others."""
     from datetime import date
 
     from optionwright import metrics
@@ -154,8 +190,22 @@ def _build_deps() -> Deps:
     )
 
 
-def run_once() -> list[dict]:
-    """One pass over every configured underlying. Skips when the market is closed."""
+def run_exits() -> list[dict]:
+    """Exits job (every EXIT_CHECK_SECONDS): manage open positions. Quiet when the
+    market is closed — it doesn't inflate the cycle counters every minute."""
+    from optionwright import metrics
+
+    if not _market_open():
+        return []
+    exits = manage_positions()
+    for _ in exits:
+        metrics.CYCLES.labels(result="closed").inc()
+    return exits
+
+
+def run_entries() -> list[dict]:
+    """Entries job (every CYCLE_SECONDS): one decision pass over every underlying.
+    Skips (and records it) when the market is closed."""
     from optionwright import metrics
 
     s = get_settings()
@@ -165,17 +215,12 @@ def run_once() -> list[dict]:
         metrics.record_cycle(result)
         return [result]
 
-    # Fresh option chains for this cycle; each underlying's chain is fetched once
-    # and reused across its puts/calls reads (invalidated per cycle, no TTL).
+    # Fresh option chains for this pass; each underlying's chain is fetched once
+    # and reused across its puts/calls reads (invalidated per pass, no TTL).
     alpaca.new_cycle()
 
-    # Manage exits first: take-profit, stop, or expiration-day close.
-    exits = manage_positions()
-    for e in exits:
-        metrics.CYCLES.labels(result="closed").inc()
-
     deps = _build_deps()
-    results = list(exits)
+    results: list[dict] = []
     for underlying in s.underlyings_list:
         try:
             result = run_cycle(underlying, deps)
@@ -187,3 +232,11 @@ def run_once() -> list[dict]:
         results.append(result)
     logger.info("cycle pass complete: %s", [r.get("action") for r in results])
     return results
+
+
+def run_once() -> list[dict]:
+    """Exits then entries in one pass. Kept for dry runs and as the reference
+    shape of a full cycle; the scheduler runs the two jobs on their own clocks."""
+    if not _market_open():
+        return run_entries()  # records the skip once
+    return run_exits() + run_entries()

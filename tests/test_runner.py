@@ -1,0 +1,248 @@
+"""
+Tests for the runner: the seam between the pure pipeline and live services, and
+the ONLY code that closes positions with money. Everything external (Alpaca,
+Postgres, the LLM, the scheduler) is a fake via monkeypatch; no network, no DB.
+"""
+from __future__ import annotations
+
+import threading
+import time
+from datetime import date
+from types import SimpleNamespace
+
+import pytest
+
+from optionwright import metrics
+from optionwright.agent import runner
+
+
+# ── fakes ─────────────────────────────────────────────────────────────────────
+class _Clock:
+    def __init__(self, is_open):
+        self.is_open = is_open
+
+
+class _TradingClient:
+    def __init__(self, is_open):
+        self.calls = 0
+        self._open = is_open
+
+    def get_clock(self):
+        self.calls += 1
+        return _Clock(self._open)
+
+
+def _use_clock(monkeypatch, is_open: bool) -> _TradingClient:
+    tc = _TradingClient(is_open)
+    monkeypatch.setattr(runner.alpaca, "_trading_client", lambda: tc)
+    return tc
+
+
+def _settings(**over):
+    base = dict(stop_loss_mult=2.0, hard_take_profit=0.40, trail_activation=0.30,
+                trail_giveback=0.07, underlyings_list=["SPY", "QQQ", "IWM"],
+                cycle_seconds=180, exit_check_seconds=60)
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def _pos(pid=1, credit=1.0, contracts=2, expiry="2099-01-01", peak=0.0, status="open"):
+    return {"id": pid, "status": status, "underlying": "SPY", "short_symbol": f"S{pid}",
+            "long_symbol": f"L{pid}", "credit": credit, "contracts": contracts,
+            "expiry": expiry, "peak_captured": peak, "realized_pnl": None}
+
+
+def _val(counter, **labels):
+    return counter.labels(**labels)._value.get()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_runner_state(monkeypatch):
+    """Each test starts with an empty market-clock cache and a free exit lock."""
+    monkeypatch.setattr(runner, "_clock_cache", None)
+    monkeypatch.setattr(runner, "_exit_lock", threading.Lock())
+    monkeypatch.setattr(runner, "get_settings", lambda: _settings())
+    yield
+
+
+# ── market clock cache ────────────────────────────────────────────────────────
+def test_market_open_is_cached_within_ttl(monkeypatch):
+    tc = _use_clock(monkeypatch, True)
+    assert runner._market_open() and runner._market_open() and runner._market_open()
+    assert tc.calls == 1  # three checks, one broker call
+
+
+def test_market_open_cache_expires(monkeypatch):
+    tc = _use_clock(monkeypatch, False)
+    monkeypatch.setattr(runner, "_CLOCK_TTL", 0.0)
+    assert runner._market_open() is False
+    assert runner._market_open() is False
+    assert tc.calls == 2
+
+
+# ── run_exits ─────────────────────────────────────────────────────────────────
+def test_run_exits_does_nothing_when_market_closed(monkeypatch):
+    _use_clock(monkeypatch, False)
+
+    def boom():
+        raise AssertionError("manage_positions must not run when the market is closed")
+
+    monkeypatch.setattr(runner, "manage_positions", boom)
+    assert runner.run_exits() == []
+
+
+def test_run_exits_runs_manage_and_counts_closes(monkeypatch):
+    _use_clock(monkeypatch, True)
+    monkeypatch.setattr(runner, "manage_positions",
+                        lambda: [{"action": "closed", "position_id": 1}, {"action": "closed", "position_id": 2}])
+    before = _val(metrics.CYCLES, result="closed")
+    out = runner.run_exits()
+    assert [o["action"] for o in out] == ["closed", "closed"]
+    assert _val(metrics.CYCLES, result="closed") == before + 2
+
+
+# ── run_entries ───────────────────────────────────────────────────────────────
+def test_run_entries_skips_when_market_closed(monkeypatch):
+    _use_clock(monkeypatch, False)
+    monkeypatch.setattr(runner, "run_cycle", lambda u, d: (_ for _ in ()).throw(AssertionError("no entries when closed")))
+    before = _val(metrics.CYCLES, result="skipped")
+    out = runner.run_entries()
+    assert out == [{"action": "skipped", "reason": "market closed"}]
+    assert _val(metrics.CYCLES, result="skipped") == before + 1
+
+
+def test_run_entries_refreshes_chains_runs_each_underlying_and_isolates_failures(monkeypatch):
+    _use_clock(monkeypatch, True)
+    calls = {"new_cycle": 0}
+    monkeypatch.setattr(runner.alpaca, "new_cycle", lambda: calls.__setitem__("new_cycle", calls["new_cycle"] + 1))
+    monkeypatch.setattr(runner, "_build_deps", lambda: object())
+
+    def fake_cycle(u, deps):
+        if u == "QQQ":
+            raise RuntimeError("chain unavailable")
+        return {"underlying": u, "action": "abstain"}
+
+    monkeypatch.setattr(runner, "run_cycle", fake_cycle)
+    errs_before = _val(metrics.ERRORS, where="cycle")
+    out = runner.run_entries()
+    assert calls["new_cycle"] == 1                       # chains refreshed once per pass
+    assert [o["action"] for o in out] == ["abstain", "error", "abstain"]  # QQQ failed, others ran
+    assert _val(metrics.ERRORS, where="cycle") == errs_before + 1
+
+
+def test_run_once_is_exits_then_entries(monkeypatch):
+    _use_clock(monkeypatch, True)
+    order = []
+    monkeypatch.setattr(runner, "run_exits", lambda: order.append("exits") or [{"action": "closed"}])
+    monkeypatch.setattr(runner, "run_entries", lambda: order.append("entries") or [{"action": "abstain"}])
+    out = runner.run_once()
+    assert order == ["exits", "entries"]
+    assert [o["action"] for o in out] == ["closed", "abstain"]
+
+
+# ── manage_positions: the money path ──────────────────────────────────────────
+def _wire_store(monkeypatch, positions, price, raise_for=()):
+    """positions: rows; price: dict pos_id->price or float; raise_for: ids whose price call raises."""
+    closes, peaks, orders = [], [], []
+    monkeypatch.setattr(runner.store, "get_positions", lambda n=200: positions)
+    monkeypatch.setattr(runner.store, "update_peak_captured", lambda pid, v: peaks.append((pid, v)))
+    monkeypatch.setattr(runner.store, "close_position", lambda pid, pnl, why: closes.append((pid, pnl, why)))
+
+    def spread_price(short, long):
+        pid = int(short[1:])
+        if pid in raise_for:
+            raise RuntimeError("quote unavailable")
+        return price[pid] if isinstance(price, dict) else price
+
+    monkeypatch.setattr(runner.alpaca, "current_spread_price", spread_price)
+    monkeypatch.setattr(runner.alpaca, "close_spread", lambda s, lng, n, lim: orders.append((s, lng, n, lim)))
+    return closes, peaks, orders
+
+
+def test_manage_closes_on_take_profit(monkeypatch):
+    closes, peaks, orders = _wire_store(monkeypatch, [_pos(1, credit=1.0, contracts=2)], price=0.50)
+    out = runner.manage_positions()
+    # captured 50% >= hard take-profit 40% -> close at price + 0.05, P&L (1.0-0.5)*100*2
+    assert orders == [("S1", "L1", 2, 0.55)]
+    assert closes[0][0] == 1 and closes[0][1] == 100.0 and "take-profit" in closes[0][2]
+    assert out[0]["action"] == "closed" and out[0]["realized_pnl"] == 100.0
+
+
+def test_manage_holds_below_thresholds(monkeypatch):
+    closes, peaks, orders = _wire_store(monkeypatch, [_pos(1)], price=0.90)  # captured 10%, trail not armed
+    assert runner.manage_positions() == []
+    assert orders == [] and closes == []
+
+
+def test_manage_updates_high_water_mark(monkeypatch):
+    closes, peaks, orders = _wire_store(monkeypatch, [_pos(1, peak=0.10)], price=0.70)  # captured 30% > peak 10%
+    runner.manage_positions()
+    assert peaks == [(1, pytest.approx(0.30))]
+
+
+def test_manage_trailing_closes_on_pullback_from_peak(monkeypatch):
+    # peak 38% captured, now 26%: gave back 12 > 7 -> trailing close
+    closes, peaks, orders = _wire_store(monkeypatch, [_pos(1, peak=0.38)], price=0.74)
+    out = runner.manage_positions()
+    assert len(out) == 1 and "trailing" in out[0]["reason"]
+
+
+def test_manage_forces_close_on_expiry_day(monkeypatch):
+    today = date.today().isoformat()
+    closes, peaks, orders = _wire_store(monkeypatch, [_pos(1, expiry=today)], price=1.30)  # losing, still closes
+    out = runner.manage_positions()
+    assert len(out) == 1 and "expiration" in out[0]["reason"]
+    assert closes[0][1] == pytest.approx((1.0 - 1.30) * 100 * 2)
+
+
+def test_manage_skips_position_without_price(monkeypatch):
+    closes, peaks, orders = _wire_store(monkeypatch, [_pos(1)], price=None)
+    assert runner.manage_positions() == []
+    assert orders == []
+
+
+def test_manage_isolates_one_failing_position(monkeypatch):
+    closes, peaks, orders = _wire_store(monkeypatch, [_pos(1), _pos(2, credit=1.0, contracts=1)],
+                                        price={1: 0.9, 2: 0.5}, raise_for=(1,))
+    errs_before = _val(metrics.ERRORS, where="manage")
+    out = runner.manage_positions()
+    assert [o["position_id"] for o in out] == [2]          # #1 failed, #2 still closed
+    assert _val(metrics.ERRORS, where="manage") == errs_before + 1
+
+
+def test_manage_ignores_closed_rows(monkeypatch):
+    closes, peaks, orders = _wire_store(monkeypatch, [_pos(1, status="closed")], price=0.1)
+    assert runner.manage_positions() == []
+    assert orders == []
+
+
+def test_manage_lock_skips_overlapping_run(monkeypatch):
+    """A second exits pass that starts while one is still running must skip,
+    never run concurrently over the same positions."""
+    calls = {"get_positions": 0}
+
+    def slow_positions(n=200):
+        calls["get_positions"] += 1
+        time.sleep(0.4)
+        return []
+
+    monkeypatch.setattr(runner.store, "get_positions", slow_positions)
+    t = threading.Thread(target=runner.manage_positions)
+    t.start()
+    time.sleep(0.1)
+    assert runner.manage_positions() == []   # returned immediately, did not enter
+    t.join()
+    assert calls["get_positions"] == 1       # only the first pass touched the store
+
+
+# ── scheduler wiring ──────────────────────────────────────────────────────────
+def test_build_scheduler_registers_exits_and_entries_jobs():
+    from optionwright.api.main import build_scheduler
+
+    sched = build_scheduler(_settings(), run_exits=lambda: None, run_entries=lambda: None)
+    jobs = {j.id: j for j in sched.get_jobs()}
+    assert set(jobs) == {"entries", "exits"}
+    assert jobs["entries"].trigger.interval.total_seconds() == 180
+    assert jobs["exits"].trigger.interval.total_seconds() == 60
+    assert jobs["exits"].max_instances == 1 and jobs["entries"].max_instances == 1
+    assert not sched.running   # built, not started (no threads in tests)

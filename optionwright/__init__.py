@@ -4,4 +4,4 @@
 exposed by /health and /api/status, shown in the dashboard footer, and used by
 `make release` as the image tag, so code, container and git tag always agree.
 """
-__version__ = "0.2.3"
+__version__ = "0.3.0"

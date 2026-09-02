@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     postgres_password: str = Field(default="change-me", alias="POSTGRES_PASSWORD")
 
     # ── Agent behavior ────────────────────────────────────────────────────────
-    cycle_seconds: int = Field(default=180, alias="CYCLE_SECONDS")  # 3 min: cycles overrun 120s
+    cycle_seconds: int = Field(default=180, alias="CYCLE_SECONDS")  # entries pass: chains + LLM
+    exit_check_seconds: int = Field(default=60, alias="EXIT_CHECK_SECONDS")  # exits pass: quotes only
     underlyings: str = Field(default="SPY,QQQ,IWM", alias="UNDERLYINGS")
     # Exit management: trailing take-profit + stop + hard cap. Trailing arms later
     # (30%) and gives back tighter (7pts) — 1-sep data showed it was closing winners

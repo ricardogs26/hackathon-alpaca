@@ -5,6 +5,20 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.3.0 — 2026-09-02 · exits on their own clock
+
+- **Exits every 60s, entries every 180s.** `manage_positions` (take-profit,
+  trailing, stop, expiry) moves to its own scheduler job, `EXIT_CHECK_SECONDS`.
+  On 1-2 Sep the trailing gave back 10-12 pts against a configured 7 because
+  positions were only checked every 180s; checking every 60s keeps it near 7
+  and reacts to stops 3x faster. The exits pass is cheap (one quote per open
+  position, no chain, no LLM).
+- Safety: `max_instances=1` per job, a non-blocking lock so two exits passes
+  never overlap, the market clock cached 15s so both jobs share one read.
+  `run_once()` keeps the old exits-then-entries shape for dry runs.
+- First tests for the runner (16): the money path, the lock, and the
+  scheduler wiring.
+
 ## 0.2.3 — 2026-09-02 · the stream knows when the market is closed
 
 - The stream's LIVE chip, title badge and footer follow the market clock:
