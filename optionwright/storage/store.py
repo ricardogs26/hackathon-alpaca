@@ -268,6 +268,10 @@ def build_policy_state(
         pnls = c.execute(
             "SELECT realized_pnl FROM positions WHERE status='closed' ORDER BY ts_close DESC LIMIT 20"
         ).fetchall()
+        sig_rows = c.execute(
+            "SELECT short_symbol, long_symbol FROM positions WHERE status='open'"
+        ).fetchall()
+    open_signatures = frozenset(f"{r[0]}|{r[1]}" for r in sig_rows)
     return PolicyState(
         equity=equity,
         open_positions=int(open_positions),
@@ -277,4 +281,5 @@ def build_policy_state(
         seconds_since_symbol_trade=float(last[0]) if last else None,
         minutes_since_open=minutes_since_open,
         minutes_to_macro=minutes_to_macro,
+        open_signatures=open_signatures,
     )

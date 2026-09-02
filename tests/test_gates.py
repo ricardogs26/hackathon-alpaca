@@ -47,6 +47,17 @@ def test_cooldown_passes_after_window():
     assert v.approved
 
 
+def test_duplicate_open_spread_vetoes():
+    # the spread's legs are "S" and "L" -> signature "S|L"
+    v = evaluate(_spread(), 1, _state(open_signatures=frozenset({"S|L"})))
+    assert not v.approved and "duplicate" in v.reason
+
+
+def test_non_duplicate_signature_passes():
+    v = evaluate(_spread(), 1, _state(open_signatures=frozenset({"OTHER|LEGS"})))
+    assert v.approved
+
+
 def test_opening_blackout_vetoes():
     v = evaluate(_spread(), 1, _state(minutes_since_open=10))
     assert not v.approved and "opening" in v.reason

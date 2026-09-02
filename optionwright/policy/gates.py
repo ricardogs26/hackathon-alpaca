@@ -37,6 +37,7 @@ class PolicyState:
     seconds_since_symbol_trade: float | None = None   # None = never traded this symbol
     minutes_since_open: float | None = None           # None = unknown (gate skipped)
     minutes_to_macro: float | None = None             # None = no upcoming macro event
+    open_signatures: frozenset = frozenset()          # "short_symbol|long_symbol" of open spreads
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,13 @@ def evaluate(
     if state.open_positions_underlying >= rules.max_per_underlying:
         return Verdict(False, 0,
                        f"per-underlying cap: {state.open_positions_underlying}/{rules.max_per_underlying} on {spread.underlying}")
+
+    # 2c — Duplicate-spread guard: never reopen the exact same spread (same legs)
+    # while an identical one is already open. The cooldown is time-based and let
+    # this slip through — on 1-sep it opened SPY 767/772 twice, doubling one bet.
+    sig = f"{spread.short_leg.symbol}|{spread.long_leg.symbol}"
+    if sig in state.open_signatures:
+        return Verdict(False, 0, f"duplicate of an open spread on {spread.underlying}")
 
     # 3 — Per-underlying cooldown.
     if state.seconds_since_symbol_trade is not None and state.seconds_since_symbol_trade < rules.cooldown_seconds:

@@ -65,9 +65,9 @@ Defined-risk credit vertical spreads on the most liquid weekly options.
 
 - A **bull put spread** when the model reads bullish, a **bear call spread** when
   bearish. Both are credit spreads with a capped max loss of `width − credit`.
-- Underlyings limited to a short whitelist (SPY, QQQ). That whitelist is a risk
-  gate, not a limitation.
-- Strikes chosen by delta, expiries near-weekly (3 to 7 DTE).
+- Underlyings limited to a short whitelist (SPY, QQQ, IWM). That whitelist is a
+  risk gate, not a limitation.
+- Strikes chosen by delta, expiries near-weekly (2 to 3 DTE).
 
 ## Risk gates
 

@@ -43,13 +43,15 @@ class Settings(BaseSettings):
     redis_db: int = Field(default=0, alias="REDIS_DB")
 
     # ── Agent behavior ────────────────────────────────────────────────────────
-    cycle_seconds: int = Field(default=300, alias="CYCLE_SECONDS")
+    cycle_seconds: int = Field(default=180, alias="CYCLE_SECONDS")  # 3 min: cycles overrun 120s
     underlyings: str = Field(default="SPY,QQQ,IWM", alias="UNDERLYINGS")
-    # Exit management: trailing take-profit + stop + hard cap
+    # Exit management: trailing take-profit + stop + hard cap. Trailing arms later
+    # (30%) and gives back tighter (7pts) — 1-sep data showed it was closing winners
+    # at ~15% when hard-TP trades averaged 40%, leaving ~$700/day on the table.
     stop_loss_mult: float = Field(default=2.0, alias="STOP_LOSS_MULT")
     hard_take_profit: float = Field(default=0.40, alias="HARD_TAKE_PROFIT")
-    trail_activation: float = Field(default=0.20, alias="TRAIL_ACTIVATION")
-    trail_giveback: float = Field(default=0.10, alias="TRAIL_GIVEBACK")
+    trail_activation: float = Field(default=0.30, alias="TRAIL_ACTIVATION")
+    trail_giveback: float = Field(default=0.07, alias="TRAIL_GIVEBACK")
     expiry_min_days: int = Field(default=2, alias="EXPIRY_MIN_DAYS")   # 2-3 DTE (judged sprint)
     expiry_max_days: int = Field(default=3, alias="EXPIRY_MAX_DAYS")
     # Risk gates — judged sprint: 8 slots x ~3.3%, max 3 per symbol (diversified)
