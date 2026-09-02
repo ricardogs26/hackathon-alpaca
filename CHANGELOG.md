@@ -5,6 +5,18 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.2.1 — 2026-09-02 · the decision stream keeps every open
+
+- **Fix:** the "Opened" filter came up empty. Open events were built from the
+  100-row decision log, which is ~98% abstentions at 3 underlyings × every 3 min,
+  so any open fell out of view within ~2 hours while closes (from positions) kept
+  the whole history. Opens now come from positions too; the decision log only
+  feeds vetoes and abstentions. `get_positions` joins the opening decision's
+  confidence so the line still reads `bearish 0.75 · opened 22× spread`.
+- Footer says "in view" instead of a misleading "today".
+- Favicon: the credit-spread payoff curve (flat, rising, flat: capped loss,
+  capped gain) inlined as an SVG data URI, no external asset.
+
 ## 0.2.0 — 2026-09-01 · the agent perceives, remembers, and only trades when convinced
 
 - **Rich context for the model** (`AGENT_RICH_CONTEXT`): market signals computed

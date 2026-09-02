@@ -44,6 +44,11 @@ week so the running agent is not touched two days before the snapshot.
   archive.
 
 ## P2 · correctness and honesty of data
+- Featherless returns an empty/malformed completion ~every 2-3 market hours
+  (3 times on 1-2 Sep); the fallback absorbs it, but `_call_openai` surfaces it
+  as a `TypeError` ('NoneType' not subscriptable). Detect empty `choices` first
+  and log it as 'primary returned empty', and retry the primary once before
+  falling back so the 72B decides more often than the local 9B.
 - Realized P&L is computed from the mid at close time, not the actual fill.
   Reconcile against Alpaca fills / account activities, or label it "estimated".
 - Swagger (`/docs`) is public on the demo URL; read-only, but decide on purpose.

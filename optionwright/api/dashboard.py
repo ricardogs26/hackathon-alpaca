@@ -12,6 +12,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>optionwright</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMwZTE2MTMiLz48cGF0aCBkPSJNMTAgNDUgSDI0IEw0MCAxOSBINTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzNkYmE4YyIgc3Ryb2tlLXdpZHRoPSI3IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4=">
 <style>
   :root{
     --bg:#0e1613; --surface:#161f1b; --raise:#1b2621; --ink:#e6efe9; --ink2:#9db0a6; --ink3:#71847a;
@@ -262,9 +263,9 @@ async function refresh(){
   if(intra) _eqIntra = intra;
   if(daily) _eqDaily = daily;
   if(_eqIntra.length || _eqDaily.length) drawEquity();
-  const pos = await j('/api/positions?limit=50') || [];
+  const pos = await j('/api/positions?limit=100') || [];
   const open = pos.filter(p=>p.status==='open').length, closed = pos.filter(p=>p.status==='closed');
-  _closedPos = closed;
+  _allPos = pos;
   const wins = closed.filter(p=>(p.realized_pnl||0)>0).length;
   const realized = closed.reduce((s,p)=>s+(p.realized_pnl||0),0);
   const winrate = closed.length?Math.round(wins/closed.length*100)+'%':'—';
@@ -292,21 +293,30 @@ async function refresh(){
 }
 
 let _decisions = [];
-let _closedPos = [];
+let _allPos = [];
 let _decFilter = 'all';
 
 // Merge cycle decisions (open/veto/abstain) and position exits (close) into one
 // time-ordered event list — the single "what the agent did" log.
 function buildEvents(){
   const ev = [];
+  // Vetoes and abstentions come from the recent decision log. Opens do NOT: that
+  // log is capped at 100 rows and is ~98% abstentions, so an open falls out of it
+  // within ~2 hours. Opens and closes both come from positions (full history).
   for(const d of _decisions){
-    const kind = d.approved ? 'open' : (d.direction==='abstain' ? 'abstain' : 'veto');
+    if(d.approved) continue;
+    const kind = d.direction==='abstain' ? 'abstain' : 'veto';
     ev.push({t:d.ts, u:d.underlying, kind, dir:d.direction, conf:d.confidence,
-             reason:d.reason||d.rationale||'', contracts:d.contracts});
+             reason:d.reason||d.rationale||''});
   }
-  for(const p of _closedPos){
-    ev.push({t:p.ts_close||p.ts_open, u:p.underlying, kind:'close',
-             reason:p.exit_reason||'exit by rule', pnl:p.realized_pnl});
+  for(const p of _allPos){
+    ev.push({t:p.ts_open, u:p.underlying, kind:'open',
+             dir:p.option_right==='call'?'bearish':'bullish', conf:p.open_confidence,
+             contracts:p.contracts, credit:p.credit});
+    if(p.status==='closed'){
+      ev.push({t:p.ts_close||p.ts_open, u:p.underlying, kind:'close',
+               reason:p.exit_reason||'exit by rule', pnl:p.realized_pnl});
+    }
   }
   ev.sort((a,b)=> (a.t<b.t?1:a.t>b.t?-1:0));
   return ev;
@@ -327,7 +337,7 @@ function renderDecisions(){
   const nOpen=all.filter(e=>e.kind==='open').length, nClose=all.filter(e=>e.kind==='close').length,
         nVeto=all.filter(e=>e.kind==='veto').length, nAbs=all.filter(e=>e.kind==='abstain').length;
   $('streamfoot').innerHTML =
-    `<span>today: ${nClose} closes · ${nOpen} opens · ${nVeto} vetoes · ${nAbs} abstains</span>`+
+    `<span>in view: ${nOpen} opens · ${nClose} closes · ${nVeto} vetoes · ${nAbs} abstains</span>`+
     `<span>streaming<span class="curs"></span></span>`;
   if(!rows.length){ el.innerHTML = '<div class="muted">No events match this filter.</div>'; return; }
   el.innerHTML = rows.map(e=>{
@@ -336,7 +346,7 @@ function renderDecisions(){
     const conf = e.conf!=null ? Number(e.conf).toFixed(2) : '';
     let msg='', vd='';
     if(e.kind==='open'){
-      msg = `<b>${e.dir}</b> ${conf} · opened ${e.contracts}× spread`;
+      msg = `<b>${e.dir}</b> ${conf} · opened ${e.contracts}× spread · credit ${e.credit}`;
       vd = `<span class="vd vd-open">OPEN ${e.contracts}×</span>`;
     } else if(e.kind==='close'){
       const pnl=e.pnl; const c=pnl==null?'':(pnl>=0?'up':'down');

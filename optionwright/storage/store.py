@@ -134,11 +134,19 @@ def get_equity_daily(limit: int = 120) -> list[dict]:
 
 def get_positions(limit: int = 50) -> list[dict]:
     with _conn() as c:
+        # LEFT JOIN LATERAL pulls the confidence/rationale of the decision that
+        # opened each position, so the dashboard can build "open" events from
+        # positions (full history) instead of from the 100-row decision log,
+        # where ~98% abstentions push any open out of view within ~2 hours.
         cur = c.execute(
-            "SELECT id, ts_open, ts_close, underlying, option_right, expiry, short_symbol, long_symbol,"
-            " contracts, credit, max_loss, status, realized_pnl, exit_reason,"
-            " coalesce(peak_captured,0) AS peak_captured"
-            " FROM positions ORDER BY ts_open DESC LIMIT %s", (limit,)
+            "SELECT p.id, p.ts_open, p.ts_close, p.underlying, p.option_right, p.expiry,"
+            " p.short_symbol, p.long_symbol, p.contracts, p.credit, p.max_loss, p.status,"
+            " p.realized_pnl, p.exit_reason, coalesce(p.peak_captured,0) AS peak_captured,"
+            " d.confidence AS open_confidence, d.rationale AS open_rationale"
+            " FROM positions p"
+            " LEFT JOIN LATERAL (SELECT confidence, rationale FROM decisions"
+            "   WHERE position_id = p.id AND approved ORDER BY ts DESC LIMIT 1) d ON true"
+            " ORDER BY p.ts_open DESC LIMIT %s", (limit,)
         )
         rows = _rows(cur)
     for r in rows:
