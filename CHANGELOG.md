@@ -5,6 +5,14 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.2.3 — 2026-09-02 · the stream knows when the market is closed
+
+- The stream's LIVE chip, title badge and footer follow the market clock:
+  **LIVE · 180s** with a pulsing dot while the market is open, **PAUSED ·
+  market closed** in grey (no pulse, footer says idle) when it is not. The
+  chip also shows the real `cycle_seconds` instead of a hard-coded 120s that
+  had been stale since the interval moved to 180s.
+
 ## 0.2.2 — 2026-09-02 · clearer stream filters, market badge
 
 - Stream filters renamed **Entries / Exits** (they are events in time, not a

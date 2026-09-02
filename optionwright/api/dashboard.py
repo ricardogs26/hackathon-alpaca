@@ -105,7 +105,9 @@ DASHBOARD_HTML = r"""<!doctype html>
     justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--ink3);font:500 .74rem/1 var(--mono)}
   .subt{color:var(--ink3);font:500 .64rem/1 var(--mono);letter-spacing:.04em;text-transform:none;margin-left:10px}
   .pill .dot{width:7px;height:7px;margin-right:5px;vertical-align:1px;box-shadow:none}
-  .dot.off{background:var(--ink3);box-shadow:none}
+  .dot.off{background:var(--ink3);box-shadow:none;animation:none}
+  .livechip.off{color:var(--ink3);background:var(--raise);border-color:var(--line)}
+  .badgeNEW.off{background:var(--ink3)}
   .badgeNEW{font:600 .58rem/1 var(--mono);letter-spacing:.1em;color:#0e1613;background:var(--acc);
     border-radius:4px;padding:3px 6px;margin-left:8px;vertical-align:middle}
 </style>
@@ -145,9 +147,9 @@ DASHBOARD_HTML = r"""<!doctype html>
     </div>
     <div class="card wide">
       <div class="streamhead">
-        <h2 style="margin:0">Live Decision Stream<span class="badgeNEW">LIVE</span><span class="subt">every action the agent took, in order</span></h2>
+        <h2 style="margin:0">Live Decision Stream<span class="badgeNEW" id="livebadge">LIVE</span><span class="subt">every action the agent took, in order</span></h2>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <span class="livechip"><span class="dot"></span>LIVE · 120s</span>
+          <span class="livechip" id="livechip"><span class="dot"></span>LIVE</span>
           <div id="decfilters" style="display:inline-flex;gap:0;flex-wrap:wrap">
             <button class="fbtn on" data-f="all">All</button>
             <button class="fbtn" data-f="opened">Entries</button>
@@ -264,6 +266,16 @@ async function refresh(){
       `<span class="pill">${st.model}</span>`+
       `<span class="pill">${st.paper?'PAPER':'LIVE'}</span>`;
     if(st.version) $('ver').textContent = 'v'+st.version;
+    _marketOpen = st.market_open;
+    const cyc = st.cycle_seconds || 180;
+    if(st.market_open===false){
+      $('livechip').className='livechip off'; $('livechip').innerHTML='<span class="dot off"></span>PAUSED · market closed';
+      $('livebadge').className='badgeNEW off'; $('livebadge').textContent='PAUSED';
+    } else {
+      $('livechip').className='livechip'; $('livechip').innerHTML='<span class="dot"></span>LIVE · '+cyc+'s';
+      $('livebadge').className='badgeNEW'; $('livebadge').textContent='LIVE';
+    }
+    renderDecisions();
   }
   const [intra, daily] = await Promise.all([j('/api/equity?limit=5000'), j('/api/equity/daily?limit=200')]);
   if(intra) _eqIntra = intra;
@@ -301,6 +313,7 @@ async function refresh(){
 let _decisions = [];
 let _allPos = [];
 let _decFilter = 'all';
+let _marketOpen = null;
 
 // Merge cycle decisions (open/veto/abstain) and position exits (close) into one
 // time-ordered event list — the single "what the agent did" log.
@@ -345,7 +358,7 @@ function renderDecisions(){
         nVeto=all.filter(e=>e.kind==='veto').length, nAbs=all.filter(e=>e.kind==='abstain').length;
   $('streamfoot').innerHTML =
     `<span>in view: ${nOpen} opens · ${nClose} closes · ${nVeto} vetoes · ${nAbs} abstains</span>`+
-    `<span>streaming<span class="curs"></span></span>`;
+    (_marketOpen===false ? `<span>idle · market closed</span>` : `<span>streaming<span class="curs"></span></span>`);
   if(!rows.length){ el.innerHTML = '<div class="muted">No events match this filter.</div>'; return; }
   el.innerHTML = rows.map(e=>{
     const tm = (e.t||'').slice(11,19);
