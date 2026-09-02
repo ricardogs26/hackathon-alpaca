@@ -165,6 +165,10 @@ def run_once() -> list[dict]:
         metrics.record_cycle(result)
         return [result]
 
+    # Fresh option chains for this cycle; each underlying's chain is fetched once
+    # and reused across its puts/calls reads (invalidated per cycle, no TTL).
+    alpaca.new_cycle()
+
     # Manage exits first: take-profit, stop, or expiration-day close.
     exits = manage_positions()
     for e in exits:

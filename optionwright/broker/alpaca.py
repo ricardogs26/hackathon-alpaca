@@ -151,33 +151,36 @@ def nearest_expiry(underlying: str, min_days: int = 1, max_days: int = 10) -> st
 
 
 # The whole-chain fetch below is the slowest call in a cycle (10-30s) and it's
-# the SAME for puts and calls of one underlying. Cache it per underlying so all
-# reads in ONE cycle share a single network fetch. TTL must be LONGER than a full
-# cycle pass (~127s, since the 6 chain fetches are slow and sequential) so the
-# cache survives the whole pass, but SHORTER than the scheduler interval (180s)
-# so the next cycle re-fetches fresh prices. 150s sits in that window.
-_CHAIN_TTL_SECONDS = 150
-_chain_cache: dict[str, tuple[float, object]] = {}  # underlying -> (expires_monotonic, chain)
+# the SAME for puts and calls of one underlying. Cache it per underlying, scoped
+# to ONE cycle: the runner calls new_cycle() at the start of each pass, so the
+# first read of an underlying fetches fresh and the rest of the cycle reuses it.
+# No TTL to tune — freshness is tied to the cycle boundary, driven by the single
+# CYCLE_SECONDS knob instead of a magic number.
+_chain_cache: dict[str, object] = {}  # underlying -> chain (valid for the current cycle)
 chain_net_fetches = 0  # counter of REAL network fetches (for tests/observability)
 
 
+def new_cycle() -> None:
+    """Invalidate the option-chain cache. Called at the start of each cycle so the
+    chain is fetched once per underlying per cycle (fresh), reused within it."""
+    _chain_cache.clear()
+
+
 def _get_chain(underlying: str):
-    """The underlying's full option chain, cached _CHAIN_TTL_SECONDS. Shared by
+    """The underlying's full option chain, cached for the current cycle. Shared by
     the puts and calls reads of the same cycle so we hit the network once."""
     global chain_net_fetches
-    import time
 
     from alpaca.data.requests import OptionChainRequest
 
-    now = time.monotonic()
-    hit = _chain_cache.get(underlying)
-    if hit and hit[0] > now:
-        return hit[1]
+    cached = _chain_cache.get(underlying)
+    if cached is not None:
+        return cached
     chain = _option_data_client().get_option_chain(
         OptionChainRequest(underlying_symbol=underlying, feed="indicative")
     )
     chain_net_fetches += 1
-    _chain_cache[underlying] = (now + _CHAIN_TTL_SECONDS, chain)
+    _chain_cache[underlying] = chain
     return chain
 
 
