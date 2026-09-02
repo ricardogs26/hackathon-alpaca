@@ -68,6 +68,9 @@ daily-budget gates shrink it to fit.
   (indicative feed) and to read the account.
 - **Alpaca CLI** for execution: each spread is placed as a single `mleg`
   (multi-leg) order — the short leg `sell_to_open`, the long leg `buy_to_open`.
+  This satisfies the **MCP-or-CLI** core requirement via the CLI, the tool Alpaca
+  positions for long-running agents and cron-style loops, which is this agent's
+  shape.
 - Paper trading only. The agent refuses to start against a live account.
 
 Every decision, position (with legs, credit, and max loss), and equity snapshot

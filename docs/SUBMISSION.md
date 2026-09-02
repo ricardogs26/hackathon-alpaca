@@ -21,7 +21,8 @@ Deadline: **Fri 4 Sep, 9:00 CST**. Submit Thursday night.
 > bearish, or abstain — with a confidence. Code then picks the strikes, sizes the
 > position, and runs it through ten ordered risk checks that can only veto or
 > shrink a trade, never enlarge it. Sizing emerges from the gates, not from the
-> model. Execution goes through the Alpaca CLI as a single multi-leg order.
+> model. Execution goes through the Alpaca CLI as a single multi-leg order (the
+> MCP-or-CLI core requirement, met via the CLI).
 >
 > Because it only trades vertical credit spreads, the maximum loss of every
 > position is fixed the moment it opens. The model is fail-closed: a timeout or a

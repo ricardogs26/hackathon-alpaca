@@ -127,6 +127,11 @@ Between those bounds the agent holds, so time decay works in its favor.
 - **Trading API + `alpaca-py`** for the option chain, quotes, greeks, and account.
 - **Alpaca CLI** for execution: each spread is one `mleg` order, the short leg
   `sell_to_open` and the long leg `buy_to_open`; closes reverse it.
+- That is how the project meets the hackathon's **"MCP or CLI"** core requirement:
+  execution goes through Alpaca's official CLI, which Alpaca positions for
+  long-running agents, cron jobs and CI where MCP is heavier than needed. This
+  agent is exactly that shape: a scheduled loop with no interactive assistant in
+  the order path.
 - Paper trading only. The agent refuses to start against a live account.
 
 ## Quickstart
