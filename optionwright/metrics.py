@@ -38,11 +38,6 @@ CONFIDENCE_OPENED = Gauge(
 )
 
 # ── Trading ───────────────────────────────────────────────────────────────────
-POSITIONS_OPENED = Counter(
-    "optionwright_positions_opened_total",
-    "Spreads opened",
-    ["underlying", "direction"],
-)
 REALIZED_PNL = Counter(
     "optionwright_realized_pnl_usd_total",
     "Realized P&L in USD (a Counter can't go negative; net = gain - loss)",
@@ -110,11 +105,7 @@ def record_cycle(result: dict) -> None:
     """Emit cycle + decision metrics from a run_cycle result dict."""
     action = result.get("action", "error")
     CYCLES.labels(result=action).inc()
-    direction = result.get("direction")
-    if action == "opened" and direction:
-        POSITIONS_OPENED.labels(
-            underlying=result.get("underlying", "?"), direction=direction
-        ).inc()
+    if action == "opened":
         conf = result.get("confidence")
         if conf is not None:
             CONFIDENCE_OPENED.set(conf)

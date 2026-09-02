@@ -24,18 +24,16 @@ def test_loss_increments_loss_counter_as_positive():
     assert _val(metrics.REALIZED_PNL, result="loss") == before + 45.0
 
 
-def test_record_cycle_counts_opened_and_position():
+def test_record_cycle_counts_opened():
     b_cyc = _val(metrics.CYCLES, result="opened")
-    b_pos = _val(metrics.POSITIONS_OPENED, underlying="SPY", direction="bullish")
     metrics.record_cycle({"action": "opened", "underlying": "SPY", "direction": "bullish"})
     assert _val(metrics.CYCLES, result="opened") == b_cyc + 1
-    assert _val(metrics.POSITIONS_OPENED, underlying="SPY", direction="bullish") == b_pos + 1
 
 
-def test_record_cycle_abstain_no_position():
-    b_pos = _val(metrics.POSITIONS_OPENED, underlying="SPY", direction="bullish")
+def test_record_cycle_abstain_counts_abstain():
+    b = _val(metrics.CYCLES, result="abstain")
     metrics.record_cycle({"action": "abstain", "underlying": "SPY"})
-    assert _val(metrics.POSITIONS_OPENED, underlying="SPY", direction="bullish") == b_pos
+    assert _val(metrics.CYCLES, result="abstain") == b + 1
 
 
 def test_opened_sets_confidence_opened_gauge():

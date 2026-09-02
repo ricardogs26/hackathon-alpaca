@@ -38,9 +38,6 @@ class Settings(BaseSettings):
     postgres_db: str = Field(default="optionwright", alias="POSTGRES_DB")
     postgres_user: str = Field(default="optionwright", alias="POSTGRES_USER")
     postgres_password: str = Field(default="change-me", alias="POSTGRES_PASSWORD")
-    redis_host: str = Field(default="redis", alias="REDIS_HOST")
-    redis_port: int = Field(default=6379, alias="REDIS_PORT")
-    redis_db: int = Field(default=0, alias="REDIS_DB")
 
     # ── Agent behavior ────────────────────────────────────────────────────────
     cycle_seconds: int = Field(default=180, alias="CYCLE_SECONDS")  # 3 min: cycles overrun 120s

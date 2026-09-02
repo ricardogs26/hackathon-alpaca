@@ -160,7 +160,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       <div class="streamfoot" id="streamfoot"><span></span><span>streaming<span class="curs"></span></span></div>
     </div>
   </div>
-  <div class="foot">optionwright · paper trading · auto-refresh 15s · <a href="/metrics">/metrics</a></div>
+  <div class="foot">optionwright <span id="ver"></span> · paper trading · auto-refresh 15s · <a href="/metrics">/metrics</a></div>
 </div>
 
 <script>
@@ -248,12 +248,6 @@ function drawEquity(){
   }
 }
 
-function dirTag(d){
-  if(d==='bullish') return '<span class="tag t-bull">bullish</span>';
-  if(d==='bearish') return '<span class="tag t-bear">bearish</span>';
-  return '<span class="tag t-abs">abstain</span>';
-}
-
 async function refresh(){
   const st = await j('/api/status');
   if(st){
@@ -262,6 +256,7 @@ async function refresh(){
       `<span class="pill">${st.underlyings.join(' · ')}</span>`+
       `<span class="pill">${st.model}</span>`+
       `<span class="pill">${st.paper?'PAPER':'LIVE'}</span>`;
+    if(st.version) $('ver').textContent = 'v'+st.version;
   }
   const [intra, daily] = await Promise.all([j('/api/equity?limit=5000'), j('/api/equity/daily?limit=200')]);
   if(intra) _eqIntra = intra;

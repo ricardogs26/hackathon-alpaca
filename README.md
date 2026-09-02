@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-65%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-85%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
 [Live dashboard](https://optionwright.richardx.dev) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
@@ -71,7 +71,7 @@ Defined-risk credit vertical spreads on the most liquid weekly options.
 
 ## Risk gates
 
-Eight gates run in order before any order. Each can veto or shrink a trade, none
+Ten risk checks run in order before any order. Each can veto or shrink a trade, none
 can enlarge one. Position size is not a fixed constant or a model output: it
 emerges from the gates. The request enters at a ceiling and the max-loss and
 daily-budget gates shrink it to fit.
@@ -81,17 +81,22 @@ daily-budget gates shrink it to fit.
 | Consecutive-loss breaker | N losing trades in a row pauses trading |
 | Open-positions cap | No more than N concurrent spreads |
 | Per-underlying cap | No more than N concurrent spreads on one symbol (anti-concentration) |
+| Duplicate-spread guard | Never reopen the exact same spread (same legs) while one is already open |
 | Per-underlying cooldown | No re-entry on a symbol within a window |
 | Opening blackout | No trades in the first minutes after the open |
 | Macro blackout | No new trades near FOMC / CPI / NFP prints |
 | Max loss per position | At most a fixed % of equity |
 | Daily premium budget | Capital-at-risk per day is bounded |
+| Confidence gate | A direction below `MIN_CONFIDENCE` is vetoed before sizing |
 
 ## Exit management
 
 Open positions are checked every cycle and closed on a rule, never left to chance.
 
-- **Take-profit** once a configurable fraction of the credit is captured.
+- **Trailing take-profit**: arms once a set fraction of the credit is captured
+  and closes if the captured fraction falls a set number of points below its
+  peak, so a runner that reverses still exits in the green.
+- **Hard take-profit** ceiling: bank automatically at a set fraction of the credit.
 - **Stop-loss** once the loss reaches a multiple of the credit.
 - **Forced close on the expiration day** to avoid assignment and pin risk.
 
@@ -101,6 +106,15 @@ Between those bounds the agent holds, so time decay works in its favor.
 
 - The analyzer's only output is `{direction, confidence, rationale}`. It never
   does arithmetic and never sizes a trade.
+- **What it sees** (`AGENT_RICH_CONTEXT`): besides the two pre-built spreads, the
+  model gets market signals computed in code as categorical flags (5-day trend,
+  momentum vs moving average, realized-volatility regime), its recent outcomes on
+  that underlying (wins by direction), and a summary of the open book (positions
+  per underlying and direction, concentration, today's P&L). It reasons over all
+  of that, but every number is resolved in code; the model never compares raw
+  numbers.
+- A **confidence gate**: a direction below `MIN_CONFIDENCE` is vetoed before
+  sizing.
 - It talks to any **OpenAI-compatible** endpoint. The deployed agent runs
   **Qwen 72B via Featherless** as the primary model, with a **local Ollama as an
   automatic fallback**: if the primary fails or returns empty, the agent decides
@@ -113,17 +127,16 @@ Between those bounds the agent holds, so time decay works in its favor.
 - **Trading API + `alpaca-py`** for the option chain, quotes, greeks, and account.
 - **Alpaca CLI** for execution: each spread is one `mleg` order, the short leg
   `sell_to_open` and the long leg `buy_to_open`; closes reverse it.
-- **MCP server** for the conversational demo.
 - Paper trading only. The agent refuses to start against a live account.
 
 ## Quickstart
 
 Judges need no Kubernetes. Docker Compose brings up the agent with its own
-Postgres and Redis:
+Postgres:
 
 ```bash
 cp .env.example .env     # fill in Alpaca paper keys + an LLM endpoint
-docker compose up        # agent + Postgres + Redis
+docker compose up        # agent + Postgres
 # dashboard on http://localhost:8080
 ```
 
@@ -137,11 +150,13 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | Primary LLM (Featherless, OpenAI, a local Ollama) |
 | `LLM_NATIVE_OLLAMA` | `true` for the native Ollama API, `false` for OpenAI-compatible |
 | `FALLBACK_LLM_BASE_URL` / `FALLBACK_LLM_MODEL` | Optional local fallback model |
-| `UNDERLYINGS` | Comma-separated tickers (default `SPY,QQQ`) |
+| `UNDERLYINGS` | Comma-separated tickers (default `SPY,QQQ,IWM`) |
 | `CYCLE_SECONDS` | How often the agent evaluates the market |
 | `MAX_OPEN_POSITIONS` / `MAX_PER_UNDERLYING` | Position caps (global and per symbol) |
 | `MAX_LOSS_PCT` / `DAILY_BUDGET_PCT` | Capital-at-risk limits |
-| `TAKE_PROFIT_PCT` / `STOP_LOSS_MULT` | Exit thresholds |
+| `HARD_TAKE_PROFIT` / `TRAIL_ACTIVATION` / `TRAIL_GIVEBACK` / `STOP_LOSS_MULT` | Exit thresholds (see Exit management) |
+| `MIN_CONFIDENCE` | Minimum model confidence to open a trade |
+| `AGENT_RICH_CONTEXT` | Feed the model market signals, recent outcomes and the open book |
 | `EXPIRY_MIN_DAYS` / `EXPIRY_MAX_DAYS` | Target days-to-expiration window |
 
 ## Architecture
@@ -149,12 +164,12 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 ```
 optionwright/
   options/    chain models + deterministic spread selection   (pure, tested)
-  policy/     the eight risk gates                             (pure, tested)
-  agent/      the cycle loop, the LLM analyzer, exit management, the runner
+  policy/     the risk gates                                   (pure, tested)
+  agent/      the cycle loop, the LLM analyzer, market perception, exits, the runner
   broker/     Alpaca chain data + multi-leg execution via CLI
   storage/    Postgres schema + reads (orders, equity, decisions)
   api/        FastAPI: read-only endpoints + the live dashboard
-tests/        65 tests over the deterministic core
+tests/        85 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -172,10 +187,11 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 65 tests, no network or account needed
+pytest -q          # 85 tests, no network or account needed
 ```
 
-The deterministic core (spread selection, the eight risk gates, exit decisions,
+The deterministic core (spread selection, the risk gates, exit decisions, market
+perception,
 the multi-leg order builders, the LLM response parser, and the full pipeline) is
 tested against synthetic data with no live services.
 

@@ -5,7 +5,7 @@ the core invariant is checked: a gate can veto or shrink, never enlarge.
 from __future__ import annotations
 
 from optionwright.options.models import Direction, OptionQuote, Right, VerticalSpread
-from optionwright.policy.gates import PolicyState, RuleSet, Verdict, evaluate
+from optionwright.policy.gates import PolicyState, RuleSet, evaluate
 
 
 def _spread(max_loss_target=400.0):

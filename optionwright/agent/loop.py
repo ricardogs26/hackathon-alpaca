@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
-from optionwright.agent.analyzer import Proposal, propose as _live_propose
+from optionwright.agent.analyzer import Proposal
 from optionwright.options.models import Direction, Right, VerticalSpread
 from optionwright.options.select import build_spread
 from optionwright.policy.gates import PolicyState, RuleSet, evaluate

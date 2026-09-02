@@ -6,11 +6,12 @@ public — the agent runs itself; this surface only reports what it did.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from optionwright import metrics  # noqa: F401 — import so metrics register at startup
+from optionwright import __version__, metrics  # noqa: F401 — metrics registers at import
 from optionwright.settings import get_settings
 
 logger = logging.getLogger("optionwright.api")
@@ -55,7 +56,7 @@ app = FastAPI(title="optionwright", docs_url="/docs", lifespan=lifespan)
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": "optionwright"}
+    return {"status": "ok", "service": "optionwright", "version": __version__}
 
 
 @app.get("/metrics")
@@ -72,6 +73,7 @@ def status() -> dict:
     running = bool(_scheduler and _scheduler.running)
     return {
         "service": "optionwright",
+        "version": __version__,
         "scheduler_running": running,
         "cycle_seconds": s.cycle_seconds,
         "underlyings": s.underlyings_list,
@@ -83,14 +85,12 @@ def status() -> dict:
 # Short TTL cache so a flood of dashboard requests hits memory, not the shared
 # Postgres. The dashboard polls every 15s, so 10s of staleness is invisible, and
 # a burst of thousands of requests still touches the DB at most once per window.
-import time as _time
-
 _cache: dict[str, tuple[float, object]] = {}
 _CACHE_TTL = 10.0
 
 
 def _cached(key: str, fn):
-    now = _time.time()
+    now = time.time()
     hit = _cache.get(key)
     if hit and now - hit[0] < _CACHE_TTL:
         return hit[1]

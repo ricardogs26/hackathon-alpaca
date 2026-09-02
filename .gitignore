@@ -17,3 +17,6 @@ venv/
 .vscode/
 .idea/
 *.swp
+
+# Claude Code scratch workspace (plans/ledgers live in docs/superpowers instead)
+.superpowers/

@@ -1,19 +1,16 @@
 # One command for judges: `docker compose up` brings up the agent with its own
-# Postgres and Redis. Fill .env first (Alpaca paper keys + an LLM endpoint).
+# Postgres. Fill .env first (Alpaca paper keys + an LLM endpoint).
 services:
   agent:
     build: .
     env_file: .env
     environment:
       POSTGRES_HOST: postgres
-      REDIS_HOST: redis
     ports:
       - "8080:8080"          # dashboard + API
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
     restart: unless-stopped
 
   postgres:
@@ -29,10 +26,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
 
 volumes:
   pgdata:
