@@ -150,12 +150,42 @@ def nearest_expiry(underlying: str, min_days: int = 1, max_days: int = 10) -> st
     return str(contracts[0].expiration_date) if contracts else None
 
 
+# The whole-chain fetch below is the slowest call in a cycle (10-30s) and it's
+# the SAME for puts and calls of one underlying. Cache it per underlying so all
+# reads in ONE cycle share a single network fetch. TTL must be LONGER than a full
+# cycle pass (~127s, since the 6 chain fetches are slow and sequential) so the
+# cache survives the whole pass, but SHORTER than the scheduler interval (180s)
+# so the next cycle re-fetches fresh prices. 150s sits in that window.
+_CHAIN_TTL_SECONDS = 150
+_chain_cache: dict[str, tuple[float, object]] = {}  # underlying -> (expires_monotonic, chain)
+chain_net_fetches = 0  # counter of REAL network fetches (for tests/observability)
+
+
+def _get_chain(underlying: str):
+    """The underlying's full option chain, cached _CHAIN_TTL_SECONDS. Shared by
+    the puts and calls reads of the same cycle so we hit the network once."""
+    global chain_net_fetches
+    import time
+
+    from alpaca.data.requests import OptionChainRequest
+
+    now = time.monotonic()
+    hit = _chain_cache.get(underlying)
+    if hit and hit[0] > now:
+        return hit[1]
+    chain = _option_data_client().get_option_chain(
+        OptionChainRequest(underlying_symbol=underlying, feed="indicative")
+    )
+    chain_net_fetches += 1
+    _chain_cache[underlying] = (now + _CHAIN_TTL_SECONDS, chain)
+    return chain
+
+
 def fetch_chain(underlying: str, expiry: str, right: Right, *, strike_span: float = 25.0) -> list[OptionQuote]:
     """
     Read the option chain for one underlying/expiry/right and return liquid-shaped
     OptionQuotes near the spot. Contracts without a tradable quote are dropped.
     """
-    from alpaca.data.requests import OptionChainRequest
     from alpaca.trading.enums import AssetStatus, ContractType
     from alpaca.trading.requests import GetOptionContractsRequest
 
@@ -173,9 +203,7 @@ def fetch_chain(underlying: str, expiry: str, right: Right, *, strike_span: floa
     )
     contracts = _trading_client().get_option_contracts(req).option_contracts
 
-    chain = _option_data_client().get_option_chain(
-        OptionChainRequest(underlying_symbol=underlying, feed="indicative")
-    )
+    chain = _get_chain(underlying)  # cached per underlying — puts+calls share one fetch
 
     quotes: list[OptionQuote] = []
     for c in contracts:
