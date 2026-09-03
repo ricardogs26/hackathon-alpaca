@@ -89,5 +89,31 @@ parser, and the full pipeline).
 
 ## Results
 
-*(Filled Thursday with the week's real numbers: equity curve, realized P&L, win
-rate, and the count of trades each risk gate vetoed.)*
+**Snapshot: Thursday night, Sep 3 2026** (paper account `PA31YQGU372M`, from
+`/metrics` and `/api/positions` on `optionwright.richardx.dev`):
+
+- **Equity**: $101,359.80 vs. $100,000 start → **+$1,359.80 (+1.36%)** net
+  (mark-to-market, includes open positions). Equity peaked at $102,327.60
+  within the observed window before giving back part of the gain.
+- **Realized P&L**: **+$2,795.00** net across 16 closed spreads
+  (`optionwright_realized_pnl_net_usd`, authoritative from Postgres).
+- **Trades**: 22 spreads opened total — 16 closed, 6 open. **Win rate on
+  closed trades: 16/16 (100%)**. Every position opened so far has been a
+  **bear call spread** (all `option_right = call`); no bull put spread has
+  been opened in the available history — the model has been persistently
+  bearish or abstaining, never confidently bullish.
+- **Credit capture** on closed trades (realized P&L ÷ credit collected):
+  ranged 11%–94%, ~35% average. SPY captured more on average (~43%) than
+  QQQ (~33%).
+- **Cycles**: 76 cycles recorded as `skipped` (no trade) in
+  `optionwright_cycles_total`. The public `/api/decisions` endpoint only
+  exposes the most recent 30 decisions (a ~28-minute window), so a full-day
+  per-gate veto count isn't reconstructable from the public API. In that
+  recent window: 28/30 were LLM abstentions, 2/30 were bearish calls blocked
+  by the per-underlying cap (3/3 open on that symbol).
+- **Open risk**: 6 open positions, $18,769 combined max loss (~18.8% of
+  equity); 2 expire today (2026-09-03), 4 tomorrow (2026-09-04).
+
+*(Numbers pulled from `/api/positions`, `/api/equity` and `/metrics` on
+2026-09-03. No cumulative "trades vetoed per gate" figure is reported
+because the decisions endpoint doesn't expose full history — see above.)*
