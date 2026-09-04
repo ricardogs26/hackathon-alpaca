@@ -5,6 +5,32 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.9.0 — 2026-09-04 · order lifecycle and reconciliation (tech-debt 1.1, 1.2, 1.3)
+
+- **Orders are followed to their end.** Entry: submit, wait up to
+  `ENTRY_FILL_WAIT_S` (10 s); filled → the position is open with the net
+  credit actually received (`fill_credit`); terminally unfilled → no position,
+  an honest decision row; still working → the position is `pending` (it counts
+  as exposure) and the next exits pass confirms it, or cancels it after
+  `ENTRY_ORDER_MAX_AGE_S` (120 s) → `unfilled`. Close: submit at
+  mid + `CLOSE_LIMIT_STEP` × (attempts + 1), wait `CLOSE_FILL_WAIT_S` (5 s);
+  filled → closed with the P&L from the **fills** (entry fill when known);
+  still working → `closing`, resolved next pass; unfilled or older than
+  `CLOSE_ORDER_MAX_AGE_S` (60 s) → cancelled, back to `open`, one attempt
+  older, retried wider. **A row is never "closed" while its legs are still at
+  the broker.** An iron condor places its second wing only after the first
+  fills. The close of #20 on 4-Sep had a limit of 3.69 and filled at 3.69
+  while the DB booked the mid (3.285): the real loss was $405 larger.
+- **Reconciliation every exits pass**: the legs implied by the DB's open and
+  closing spreads against the broker's option positions. A mismatch is
+  logged, gauged (`optionwright_reconcile_mismatch`), sent to WhatsApp (at
+  most every `RECONCILE_ALERT_MINUTES`) and **blocks new entries** until the
+  books agree. Never corrected automatically. A broker hiccup keeps the last
+  state rather than crying wolf.
+- Metrics `optionwright_orders_total{kind,result}`; positions carry
+  `fill_credit`, `fill_exit_price`, `close_attempts`, `pending_order_id`.
+- 15 new tests (219 total).
+
 ## 0.8.1 — 2026-09-04
 
 - `python -m optionwright.learning` works as documented (the module lives in

@@ -66,15 +66,60 @@ def record_decision(
         )
 
 
-def record_position(spread: VerticalSpread, contracts: int, order_id: str | None) -> int:
+LIVE = ("open", "closing", "pending")   # statuses that count as exposure for the gates
+
+
+def record_position(spread: VerticalSpread, contracts: int, order_id: str | None,
+                    status: str = "open", fill_credit: float | None = None) -> int:
+    """status 'open' when the entry filled (fill_credit = the net credit actually
+    received), 'pending' while the entry order is still working."""
     with _conn() as c:
         row = c.execute(
-            "INSERT INTO positions (underlying,expiry,option_right,short_symbol,long_symbol,contracts,credit,max_loss,order_id)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            "INSERT INTO positions (underlying,expiry,option_right,short_symbol,long_symbol,contracts,credit,max_loss,"
+            " order_id,status,fill_credit,pending_order_id,pending_since)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,CASE WHEN %s='pending' THEN now() END) RETURNING id",
             (spread.underlying, spread.expiry, spread.right.value, spread.short_leg.symbol,
-             spread.long_leg.symbol, contracts, spread.credit, spread.max_loss * contracts, order_id),
+             spread.long_leg.symbol, contracts, spread.credit, spread.max_loss * contracts, order_id,
+             status, fill_credit, order_id if status == "pending" else None, status),
         ).fetchone()
         return row[0]
+
+
+def confirm_fill(position_id: int, fill_credit: float | None) -> None:
+    """A pending entry filled: it is open from here."""
+    with _conn() as c:
+        c.execute("UPDATE positions SET status='open', fill_credit=%s, pending_order_id=NULL, pending_since=NULL WHERE id=%s",
+                  (fill_credit, position_id))
+
+
+def mark_unfilled(position_id: int, reason: str) -> None:
+    """A pending entry never filled: no money moved, the row stays as a record."""
+    with _conn() as c:
+        c.execute("UPDATE positions SET status='unfilled', ts_close=now(), exit_reason=%s, pending_order_id=NULL, pending_since=NULL"
+                  " WHERE id=%s AND status='pending'", (reason, position_id))
+
+
+def mark_closing(position_id: int, order_id: str, reason: str) -> None:
+    """A close order is working; the reason the rules gave is kept for the final row."""
+    with _conn() as c:
+        c.execute("UPDATE positions SET status='closing', pending_order_id=%s, pending_since=now(), exit_reason=%s"
+                  " WHERE id=%s AND status='open'", (order_id, reason, position_id))
+
+
+def revert_closing(position_id: int) -> None:
+    """The close order did not fill: the position is open again, one attempt older."""
+    with _conn() as c:
+        c.execute("UPDATE positions SET status='open', pending_order_id=NULL, pending_since=NULL, close_attempts=close_attempts+1"
+                  " WHERE id=%s AND status='closing'", (position_id,))
+
+
+def pending_rows(statuses: tuple[str, ...] = ("pending", "closing")) -> list[dict]:
+    with _conn() as c:
+        rows = _rows(c.execute(
+            "SELECT id, underlying, status, contracts, credit, fill_credit, pending_order_id, close_attempts, exit_reason,"
+            " extract(epoch FROM now() - pending_since) AS pending_age_s FROM positions WHERE status = ANY(%s) ORDER BY id",
+            (list(statuses),)))
+    return rows
 
 
 def note_regime(position_id: int, regime: str | None) -> None:
@@ -94,6 +139,13 @@ def closed_positions(days: int = 45) -> list[dict]:
     for r in rows:
         r["expiry"] = str(r["expiry"])
     return rows
+
+
+def live_legs_rows() -> list[dict]:
+    """Rows the reconciliation compares against the broker (open or closing)."""
+    with _conn() as c:
+        return _rows(c.execute(
+            "SELECT id, status, contracts, short_symbol, long_symbol FROM positions WHERE status IN ('open','closing')"))
 
 
 # ── rule proposals (phase 4) ──────────────────────────────────────────────────
@@ -141,13 +193,15 @@ def decide_proposal(proposal_id: int, approve: bool, decided_by: str) -> dict:
             "value": p["proposed"] if approve else p["current"]}
 
 
-def close_position(position_id: int, realized_pnl: float, exit_reason: str) -> None:
+def close_position(position_id: int, realized_pnl: float, exit_reason: str,
+                   fill_exit_price: float | None = None) -> None:
     from optionwright import metrics
 
     with _conn() as c:
         c.execute(
-            "UPDATE positions SET status='closed', ts_close=now(), realized_pnl=%s, exit_reason=%s WHERE id=%s",
-            (realized_pnl, exit_reason, position_id),
+            "UPDATE positions SET status='closed', ts_close=now(), realized_pnl=%s, exit_reason=%s, fill_exit_price=%s,"
+            " pending_order_id=NULL, pending_since=NULL WHERE id=%s",
+            (realized_pnl, exit_reason, fill_exit_price, position_id),
         )
     metrics.record_realized_pnl(realized_pnl)
 
@@ -296,6 +350,7 @@ def get_positions(limit: int = 50) -> list[dict]:
             "SELECT p.id, p.ts_open, p.ts_close, p.underlying, p.option_right, p.expiry,"
             " p.short_symbol, p.long_symbol, p.contracts, p.credit, p.max_loss, p.status,"
             " p.realized_pnl, p.exit_reason, coalesce(p.peak_captured,0) AS peak_captured,"
+            " p.fill_credit, p.fill_exit_price, p.close_attempts, p.pending_order_id,"
             " d.confidence AS open_confidence, d.rationale AS open_rationale"
             " FROM positions p"
             " LEFT JOIN LATERAL (SELECT confidence, rationale FROM decisions"
@@ -427,7 +482,7 @@ def latest_ticks(position_ids: list[int]) -> dict[int, dict]:
 
 def book_net_delta_usd() -> float | None:
     with _conn() as c:
-        open_rows = _rows(c.execute("SELECT id, option_right, contracts FROM positions WHERE status='open'"))
+        open_rows = _rows(c.execute("SELECT id, option_right, contracts FROM positions WHERE status = ANY(%s)", (list(LIVE),)))
     return _net_delta_usd(open_rows, latest_ticks([r["id"] for r in open_rows]))
 
 
@@ -435,8 +490,8 @@ def open_position_states() -> list[dict]:
     """Open positions with their latest tick (the dashboard's state panel)."""
     with _conn() as c:
         open_rows = _rows(c.execute(
-            "SELECT id, underlying, option_right, short_symbol, long_symbol, contracts, credit, expiry, ts_open"
-            " FROM positions WHERE status='open' ORDER BY id"))
+            "SELECT id, underlying, option_right, short_symbol, long_symbol, contracts, credit, expiry, ts_open, status"
+            " FROM positions WHERE status = ANY(%s) ORDER BY id", (list(LIVE),)))
     ticks = latest_ticks([r["id"] for r in open_rows])
     out = []
     for r in open_rows:
@@ -475,7 +530,7 @@ def book_summary(lookback_hours: float = 24.0) -> dict:
     """Resumen del libro abierto + P&L del día + racha de pérdidas (dentro de la ventana)."""
     with _conn() as c:
         open_cur = c.execute(
-            "SELECT underlying, option_right FROM positions WHERE status='open'"
+            "SELECT underlying, option_right FROM positions WHERE status = ANY(%s)", (list(LIVE),)
         )
         open_rows = _rows(open_cur)
         pnl_dia = c.execute(
@@ -505,19 +560,19 @@ def build_policy_state(
     peers = [s.upper() for s in (group_symbols or [underlying])]
     with _conn() as c:
         open_rows = _rows(c.execute(
-            "SELECT id, underlying, option_right, contracts, max_loss, short_symbol FROM positions WHERE status='open'"))
+            "SELECT id, underlying, option_right, contracts, max_loss, short_symbol FROM positions WHERE status = ANY(%s)", (list(LIVE),)))
         last_group = c.execute(
             "SELECT extract(epoch FROM now() - max(ts_open)) FROM positions WHERE underlying = ANY(%s)", (peers,)
         ).fetchone()
         realized_today = c.execute(
             "SELECT coalesce(sum(realized_pnl),0) FROM positions WHERE status='closed' AND ts_close::date = now()::date"
         ).fetchone()[0]
-        open_positions = c.execute("SELECT count(*) FROM positions WHERE status='open'").fetchone()[0]
+        open_positions = c.execute("SELECT count(*) FROM positions WHERE status = ANY(%s)", (list(LIVE),)).fetchone()[0]
         open_underlying = c.execute(
-            "SELECT count(*) FROM positions WHERE status='open' AND underlying=%s", (underlying,)
+            "SELECT count(*) FROM positions WHERE status = ANY(%s) AND underlying=%s", (list(LIVE), underlying)
         ).fetchone()[0]
         at_risk = c.execute(
-            "SELECT coalesce(sum(max_loss),0) FROM positions WHERE status='open' AND ts_open::date = now()::date"
+            "SELECT coalesce(sum(max_loss),0) FROM positions WHERE status = ANY(%s) AND ts_open::date = now()::date", (list(LIVE),)
         ).fetchone()[0]
         last = c.execute(
             "SELECT extract(epoch FROM now() - ts_open) FROM positions WHERE underlying=%s ORDER BY ts_open DESC LIMIT 1",
@@ -527,7 +582,7 @@ def build_policy_state(
             "SELECT realized_pnl, ts_close FROM positions WHERE status='closed' ORDER BY ts_close DESC LIMIT 20"
         ).fetchall()
         sig_rows = c.execute(
-            "SELECT short_symbol, long_symbol FROM positions WHERE status='open'"
+            "SELECT short_symbol, long_symbol FROM positions WHERE status = ANY(%s)", (list(LIVE),)
         ).fetchall()
     open_signatures = frozenset(f"{r[0]}|{r[1]}" for r in sig_rows)
     risk_by_direction: dict[str, float] = {}

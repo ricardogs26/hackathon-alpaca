@@ -46,7 +46,10 @@ def _settings(**over):
 
     base = dict(underlyings_list=["SPY", "QQQ", "IWM"], universe=flat_universe(["SPY", "QQQ", "IWM"]),
                 chain_prefetch_workers=3, cycle_seconds=180, exit_check_seconds=60,
-                trend_flat_pct=1.0, vol_high_pct=1.2)
+                trend_flat_pct=1.0, vol_high_pct=1.2,
+                entry_fill_wait_s=0.0, entry_order_max_age_s=120.0, close_fill_wait_s=0.0,
+                close_order_max_age_s=60.0, close_limit_step=0.05, close_limit_max_steps=6,
+                reconcile_alert_minutes=30.0)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -154,7 +157,15 @@ def _wire_store(monkeypatch, positions, price, raise_for=()):
     closes, peaks, orders = [], [], []
     monkeypatch.setattr(runner.store, "get_positions", lambda n=200: positions)
     monkeypatch.setattr(runner.store, "update_peak_captured", lambda pid, v: peaks.append((pid, v)))
-    monkeypatch.setattr(runner.store, "close_position", lambda pid, pnl, why: closes.append((pid, pnl, why)))
+    monkeypatch.setattr(runner.store, "close_position", lambda pid, pnl, why, fill_exit_price=None: closes.append((pid, pnl, why)))
+    # order lifecycle + reconciliation: fills immediately, books agree, nothing pending unless a test says so
+    monkeypatch.setattr(runner.store, "pending_rows", lambda statuses=("pending", "closing"): [])
+    monkeypatch.setattr(runner.store, "mark_closing", lambda pid, oid, why: None)
+    monkeypatch.setattr(runner.store, "revert_closing", lambda pid: None)
+    monkeypatch.setattr(runner.store, "live_legs_rows", lambda: [])
+    monkeypatch.setattr(runner.alpaca, "wait_for_fill", lambda oid, w, poll_s=1.0: {"status": "filled", "filled_avg_price": None})
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {})
+    monkeypatch.setattr(runner, "_reconcile_ok", True)
 
     def spread_price(short, long):
         pid = int(short[1:]) if short[1:].isdigit() else None   # "S1" fakes; OCC symbols carry no id
@@ -163,7 +174,7 @@ def _wire_store(monkeypatch, positions, price, raise_for=()):
         return price[pid] if isinstance(price, dict) else price
 
     monkeypatch.setattr(runner.alpaca, "current_spread_price", spread_price)
-    monkeypatch.setattr(runner.alpaca, "close_spread", lambda s, lng, n, lim: orders.append((s, lng, n, lim)))
+    monkeypatch.setattr(runner.alpaca, "close_spread", lambda s, lng, n, lim: orders.append((s, lng, n, lim)) or {"id": f"o{len(orders)}"})
     monkeypatch.setattr(runner.alpaca, "spread_snapshot", lambda s, lng: None)   # no greeks unless a test says so
     monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: [])            # no intraday vol unless a test says so
     monkeypatch.setattr(runner, "_record_tick", lambda *a, **k: None)          # instrumentation off here
@@ -258,6 +269,7 @@ def test_manage_lock_skips_overlapping_run(monkeypatch):
         time.sleep(0.4)
         return []
 
+    _wire_store(monkeypatch, [], price=1.0)
     monkeypatch.setattr(runner.store, "get_positions", slow_positions)
     t = threading.Thread(target=runner.manage_positions)
     t.start()
@@ -482,3 +494,123 @@ def test_build_scheduler_adds_the_nightly_learning_job_when_configured():
     assert {j.id for j in sched.get_jobs()} == {"entries", "exits", "learning"}
     s2 = SimpleNamespace(cycle_seconds=180, exit_check_seconds=60, learning_cron_utc="")
     assert {j.id for j in build_scheduler(s2, lambda: None, lambda: None, lambda: None).get_jobs()} == {"entries", "exits"}
+
+
+# ── tech-debt 1.1: order lifecycle ────────────────────────────────────────────
+def test_close_uses_the_fill_price_for_pnl_when_filled(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0, contracts=2)], price=0.50)     # take-profit
+    monkeypatch.setattr(runner.alpaca, "wait_for_fill", lambda oid, w, poll_s=1.0: {"status": "filled", "filled_avg_price": 0.53})
+    out = runner.manage_positions()
+    assert orders[0][3] == 0.55                                    # first attempt: price + 1 step
+    assert closes[0][1] == pytest.approx((1.0 - 0.53) * 100 * 2)   # from the fill, not the mid
+    assert out[0]["action"] == "closed" and out[0]["fill_price"] == 0.53
+
+
+def test_close_uses_the_entry_fill_when_known(monkeypatch):
+    _use_clock(monkeypatch, True)
+    pos = _occ_pos(credit=1.0, contracts=1)
+    pos["fill_credit"] = 1.10
+    closes, _, _ = _wire_store(monkeypatch, [pos], price=0.50)
+    monkeypatch.setattr(runner.alpaca, "wait_for_fill", lambda oid, w, poll_s=1.0: {"status": "filled", "filled_avg_price": 0.50})
+    runner.manage_positions()
+    assert closes[0][1] == pytest.approx(60.0)                     # (1.10 - 0.50) * 100
+
+
+def test_close_not_filled_in_time_marks_closing_and_never_closes_the_row(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0)], price=0.50)
+    marked = []
+    monkeypatch.setattr(runner.store, "mark_closing", lambda pid, oid, why: marked.append((pid, oid, why)))
+    monkeypatch.setattr(runner.alpaca, "wait_for_fill", lambda oid, w, poll_s=1.0: {"status": "new", "filled_avg_price": None})
+    out = runner.manage_positions()
+    assert closes == [] and len(marked) == 1 and marked[0][:2] == (22, "o1") and "take-profit" in marked[0][2]
+    assert out[0]["action"] == "closing"
+
+
+def test_close_terminally_unfilled_reverts_and_next_attempt_widens(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0)], price=0.50)
+    reverted = []
+    monkeypatch.setattr(runner.store, "revert_closing", lambda pid: reverted.append(pid))
+    monkeypatch.setattr(runner.alpaca, "wait_for_fill", lambda oid, w, poll_s=1.0: {"status": "canceled"})
+    out = runner.manage_positions()
+    assert closes == [] and reverted == [22] and out[0]["action"] == "close_unfilled"
+    # second attempt: two steps wider, capped by close_limit_max_steps
+    pos = _occ_pos(credit=1.0)
+    pos["close_attempts"] = 1
+    _, _, orders2 = _wire_store(monkeypatch, [pos], price=0.50)
+    monkeypatch.setattr(runner.alpaca, "wait_for_fill", lambda oid, w, poll_s=1.0: {"status": "filled", "filled_avg_price": 0.6})
+    runner.manage_positions()
+    assert orders2[0][3] == 0.60
+    pos9 = _occ_pos(credit=1.0)
+    pos9["close_attempts"] = 9
+    _, _, orders9 = _wire_store(monkeypatch, [pos9], price=0.50)
+    monkeypatch.setattr(runner.alpaca, "wait_for_fill", lambda oid, w, poll_s=1.0: {"status": "filled", "filled_avg_price": 0.8})
+    runner.manage_positions()
+    assert orders9[0][3] == 0.80                                    # 6 steps max
+
+
+def test_resolve_pending_entry_filled_and_unfilled_and_stale(monkeypatch):
+    _use_clock(monkeypatch, True)
+    _wire_store(monkeypatch, [], price=1.0)
+    rows = [{"id": 1, "status": "pending", "contracts": 2, "credit": 1.0, "fill_credit": None, "pending_order_id": "a", "close_attempts": 0, "pending_age_s": 5, "exit_reason": None},
+            {"id": 2, "status": "pending", "contracts": 2, "credit": 1.0, "fill_credit": None, "pending_order_id": "b", "close_attempts": 0, "pending_age_s": 5, "exit_reason": None},
+            {"id": 3, "status": "pending", "contracts": 2, "credit": 1.0, "fill_credit": None, "pending_order_id": "c", "close_attempts": 0, "pending_age_s": 500, "exit_reason": None}]
+    monkeypatch.setattr(runner.store, "pending_rows", lambda statuses=("pending", "closing"): rows)
+    statuses = {"a": {"status": "filled", "filled_avg_price": 1.02}, "b": {"status": "canceled"}, "c": {"status": "new"}}
+    monkeypatch.setattr(runner.alpaca, "order_status", lambda oid: statuses[oid])
+    confirmed, unfilled, canceled = [], [], []
+    monkeypatch.setattr(runner.store, "confirm_fill", lambda pid, fc: confirmed.append((pid, fc)))
+    monkeypatch.setattr(runner.store, "mark_unfilled", lambda pid, why: unfilled.append((pid, why)))
+    monkeypatch.setattr(runner.alpaca, "cancel_order", lambda oid: canceled.append(oid) or True)
+    out = runner.manage_positions()
+    assert confirmed == [(1, 1.02)]
+    assert [u[0] for u in unfilled] == [2, 3] and "canceled after" in unfilled[1][1]
+    assert canceled == ["c"]
+    assert [o["action"] for o in out] == ["entry_filled", "entry_unfilled", "entry_unfilled"]
+
+
+def test_resolve_closing_filled_settles_with_fill_and_stale_reverts(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, _ = _wire_store(monkeypatch, [], price=1.0)
+    rows = [{"id": 5, "status": "closing", "contracts": 3, "credit": 1.0, "fill_credit": 1.05, "pending_order_id": "x", "close_attempts": 0, "pending_age_s": 10, "exit_reason": "stop (short delta 0.46 >= 0.45)"},
+            {"id": 6, "status": "closing", "contracts": 1, "credit": 1.0, "fill_credit": None, "pending_order_id": "y", "close_attempts": 0, "pending_age_s": 90, "exit_reason": "take-profit"}]
+    monkeypatch.setattr(runner.store, "pending_rows", lambda statuses=("pending", "closing"): rows)
+    monkeypatch.setattr(runner.alpaca, "order_status", lambda oid: {"x": {"status": "filled", "filled_avg_price": 2.05}, "y": {"status": "new"}}[oid])
+    reverted, canceled = [], []
+    monkeypatch.setattr(runner.store, "revert_closing", lambda pid: reverted.append(pid))
+    monkeypatch.setattr(runner.alpaca, "cancel_order", lambda oid: canceled.append(oid) or True)
+    runner.manage_positions()
+    assert closes == [(5, pytest.approx((1.05 - 2.05) * 100 * 3), "stop (short delta 0.46 >= 0.45)")]
+    assert reverted == [6] and canceled == ["y"]
+
+
+# ── tech-debt 1.2: reconciliation ─────────────────────────────────────────────
+def test_reconciliation_mismatch_blocks_entries_until_it_clears(monkeypatch):
+    _use_clock(monkeypatch, True)
+    _wire_store(monkeypatch, [], price=1.0)
+    monkeypatch.setattr(runner.store, "live_legs_rows", lambda: [{"status": "open", "contracts": 2, "short_symbol": "S", "long_symbol": "L"}])
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {"S": -2})    # long leg missing at the broker
+    sent = []
+    from optionwright.agent import notify
+    monkeypatch.setattr(notify, "send_whatsapp", lambda t: sent.append(t) or True)
+    monkeypatch.setattr(runner, "_last_reconcile_alert", 0.0)
+    runner.manage_positions()
+    assert runner.reconciled() is False and metrics.RECONCILE_MISMATCH._value.get() == 1
+    assert sent and "no coinciden" in sent[0] and "L: db +2 vs broker +0" in sent[0]
+    # entries are skipped while mismatched
+    out = runner.run_entries()
+    assert out == [{"action": "skipped", "reason": "reconciliation mismatch"}]
+    # books agree again -> unblocked
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {"S": -2, "L": 2})
+    runner.manage_positions()
+    assert runner.reconciled() is True and metrics.RECONCILE_MISMATCH._value.get() == 0
+
+
+def test_reconciliation_broker_hiccup_keeps_the_last_state(monkeypatch):
+    _use_clock(monkeypatch, True)
+    _wire_store(monkeypatch, [], price=1.0)
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: (_ for _ in ()).throw(RuntimeError("api down")))
+    runner.manage_positions()
+    assert runner.reconciled() is True

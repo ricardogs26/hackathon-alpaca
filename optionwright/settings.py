@@ -100,6 +100,14 @@ class Settings(BaseSettings):
     min_reward_risk: float = Field(default=0.20, alias="MIN_REWARD_RISK")
     # Bearer token required by PATCH /api/rules and the proposal decisions. Empty = disabled.
     rules_token: str = Field(default="", alias="RULES_TOKEN")
+    # ── Order lifecycle (tech-debt 1.1) ──────────────────────────────────────
+    entry_fill_wait_s: float = Field(default=10.0, alias="ENTRY_FILL_WAIT_S")        # wait this long for an entry to fill
+    entry_order_max_age_s: float = Field(default=120.0, alias="ENTRY_ORDER_MAX_AGE_S")  # then cancel a pending entry
+    close_fill_wait_s: float = Field(default=5.0, alias="CLOSE_FILL_WAIT_S")
+    close_order_max_age_s: float = Field(default=60.0, alias="CLOSE_ORDER_MAX_AGE_S")   # then cancel and retry wider
+    close_limit_step: float = Field(default=0.05, alias="CLOSE_LIMIT_STEP")            # limit = price + step × (attempts + 1)
+    close_limit_max_steps: int = Field(default=6, alias="CLOSE_LIMIT_MAX_STEPS")
+    reconcile_alert_minutes: float = Field(default=30.0, alias="RECONCILE_ALERT_MINUTES")  # WhatsApp at most this often
     # ── Phase 4: nightly statistical memory ──────────────────────────────────
     learning_cron_utc: str = Field(default="30 22 * * 1-5", alias="LEARNING_CRON_UTC")   # 17:30 CST, weekdays; "" = off
     whatsapp_send_url: str = Field(default="", alias="WHATSAPP_SEND_URL")   # Amael bridge, e.g. http://whatsapp-bridge-service.amael-ia:3000

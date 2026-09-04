@@ -406,6 +406,63 @@ def _build_mleg_close_args(short_symbol: str, long_symbol: str, contracts: int, 
     ]
 
 
+TERMINAL_UNFILLED = ("canceled", "expired", "rejected", "replaced", "done_for_day", "stopped", "suspended")
+
+
+def order_status(order_id: str) -> dict:
+    """{status, filled_avg_price (net, per share), filled_qty, legs} for one order.
+    Alpaca reports a multi-leg order's `filled_avg_price` as the NET debit or
+    credit (verified 4-Sep-2026: close of #20 limit 3.69 → buy 6.78 / sell 3.09
+    → 3.69)."""
+    o = _trading_client().get_order_by_id(order_id)
+    status = str(getattr(o.status, "value", o.status)).lower()
+    fap = getattr(o, "filled_avg_price", None)
+    return {
+        "id": str(o.id), "status": status,
+        "filled_avg_price": float(fap) if fap is not None else None,
+        "filled_qty": int(float(o.filled_qty or 0)),
+        "legs": [{"symbol": leg.symbol, "side": str(getattr(leg.side, "value", leg.side)),
+                  "filled_avg_price": float(leg.filled_avg_price) if leg.filled_avg_price is not None else None}
+                 for leg in (o.legs or [])],
+    }
+
+
+def cancel_order(order_id: str) -> bool:
+    """Best effort; an order already done is not an error."""
+    try:
+        _trading_client().cancel_order_by_id(order_id)
+        return True
+    except Exception as exc:
+        logger.info("cancel %s: %s", order_id, str(exc)[:120])
+        return False
+
+
+def wait_for_fill(order_id: str, wait_s: float, poll_s: float = 1.0) -> dict:
+    """Poll until the order is filled or terminally unfilled, at most wait_s.
+    Returns the last status seen (a still-working order comes back as such)."""
+    import time
+
+    deadline = time.monotonic() + max(0.0, wait_s)
+    st = order_status(order_id)
+    while st["status"] != "filled" and st["status"] not in TERMINAL_UNFILLED and time.monotonic() < deadline:
+        time.sleep(poll_s)
+        st = order_status(order_id)
+    return st
+
+
+def broker_option_positions() -> dict[str, int]:
+    """Signed contracts per option symbol held at the broker (short negative)."""
+    out: dict[str, int] = {}
+    for p in _trading_client().get_all_positions():
+        cls = str(getattr(p.asset_class, "value", p.asset_class)).lower()
+        if "option" not in cls:
+            continue
+        qty = int(float(p.qty))
+        side = str(getattr(p.side, "value", p.side)).lower()
+        out[p.symbol] = -abs(qty) if side == "short" else abs(qty)
+    return out
+
+
 def close_spread(short_symbol: str, long_symbol: str, contracts: int, limit_price: float) -> dict:
     """Close a spread by submitting the reverse multi-leg order via the CLI."""
     argv = _build_mleg_close_args(short_symbol, long_symbol, contracts, limit_price)

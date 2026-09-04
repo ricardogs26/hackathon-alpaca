@@ -37,6 +37,12 @@ CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_positions_underlying ON positions(underlying);
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS peak_captured DOUBLE PRECISION DEFAULT 0;
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS regime TEXT;   -- regime at open (phase 4 buckets)
+-- Order lifecycle (tech-debt 1.1): status pending | open | closing | closed | unfilled.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS fill_credit DOUBLE PRECISION;      -- net credit actually filled at entry
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS fill_exit_price DOUBLE PRECISION;  -- net debit actually filled at exit
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS pending_order_id TEXT;             -- the working entry or close order
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS pending_since TIMESTAMPTZ;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS close_attempts INTEGER NOT NULL DEFAULT 0;
 
 -- Phase 0 instrumentation: one row per open position per exits tick (~60s).
 -- The state a premium seller reads (delta, sigma distance, time left, sleeps)

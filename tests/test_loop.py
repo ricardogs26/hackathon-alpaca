@@ -268,3 +268,48 @@ def test_regime_bookkeeping_failure_never_breaks_the_cycle():
     deps = _rich(rec.deps(Proposal(Direction.BULLISH, 0.9, "up")))
     deps.note_regime = lambda pid, regime: (_ for _ in ()).throw(RuntimeError("db"))
     assert run_cycle("SPY", deps)["action"] == "opened"
+
+
+# ── tech-debt 1.1: the loop learns whether the entry filled ──────────────────
+def _with_fill(rec, proposal, status, fap=1.03):
+    deps = _rich(rec.deps(proposal))
+    deps.wait_fill = lambda oid: {"id": oid, "status": status, "filled_avg_price": fap}
+    recorded = []
+    deps.record_position = lambda sp, n, oid, status="open", fill_credit=None: recorded.append((sp.direction, status, fill_credit)) or (100 + len(recorded))
+    return deps, recorded
+
+
+def test_filled_entry_records_the_fill_credit():
+    rec = _Recorder()
+    deps, recorded = _with_fill(rec, Proposal(Direction.BULLISH, 0.9, "up"), "filled", 1.03)
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "opened" and res["fill"] == "filled" and recorded == [(Direction.BULLISH, "open", 1.03)]
+
+
+def test_unfilled_entry_records_no_position_and_an_honest_decision():
+    rec = _Recorder()
+    deps, recorded = _with_fill(rec, Proposal(Direction.BULLISH, 0.9, "up"), "canceled")
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "unfilled" and "canceled" in res["reason"] and recorded == []
+    assert rec.decisions[-1][0][4] is False
+
+
+def test_still_working_entry_is_recorded_pending():
+    rec = _Recorder()
+    deps, recorded = _with_fill(rec, Proposal(Direction.BULLISH, 0.9, "up"), "new")
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "opened" and res["fill"] == "pending" and recorded == [(Direction.BULLISH, "pending", None)]
+    assert "(pending fill)" in rec.decisions[-1][0][6]
+
+
+def test_condor_places_the_second_wing_only_after_the_first_fills():
+    rec = _Recorder()
+    deps, recorded = _with_fill(rec, Proposal(Direction.NEUTRAL, 0.9, "rango"), "new")
+    canceled = []
+    deps.cancel_order = lambda oid: canceled.append(oid) or True
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "unfilled" and len(rec.submitted) == 1 and canceled == ["order-123"]
+    rec2 = _Recorder()
+    deps2, recorded2 = _with_fill(rec2, Proposal(Direction.NEUTRAL, 0.9, "rango"), "filled")
+    res2 = run_cycle("SPY", deps2)
+    assert res2["structure"] == "iron_condor" and len(recorded2) == 2

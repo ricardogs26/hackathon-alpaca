@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-204%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-219%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
 [Live dashboard](https://optionwright.richardx.dev) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
@@ -168,7 +168,10 @@ token. Details in [`docs/RULES.md`](docs/RULES.md#learning--the-nightly-memory-a
 
 - **Trading API + `alpaca-py`** for the option chain, quotes, greeks, and account.
 - **Alpaca CLI** for execution: each spread is one `mleg` order, the short leg
-  `sell_to_open` and the long leg `buy_to_open`; closes reverse it.
+  `sell_to_open` and the long leg `buy_to_open`; closes reverse it. Every order
+  is followed to its end (filled, cancelled, or retried wider), realized P&L
+  comes from the fills, and each exits pass reconciles the book in Postgres
+  against the broker's positions — a mismatch blocks new entries and alerts.
 - That is how the project meets the hackathon's **"MCP or CLI"** core requirement:
   execution goes through Alpaca's official CLI, which Alpaca positions for
   long-running agents, cron jobs and CI where MCP is heavier than needed. This
@@ -216,7 +219,7 @@ optionwright/
   storage/    Postgres schema + reads (orders, equity, decisions)
   api/        FastAPI: read-only endpoints, the rules API + the live dashboard
   replay.py   the exit rules over recorded ticks, simulated vs actual
-tests/        204 tests over the deterministic core
+tests/        219 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -240,7 +243,7 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 204 tests, no network or account needed
+pytest -q          # 219 tests, no network or account needed
 ```
 
 The deterministic core (spread selection, the risk gates, exit decisions, market

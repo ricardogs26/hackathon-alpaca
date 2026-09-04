@@ -24,6 +24,7 @@ from optionwright.agent.analyzer import propose
 from optionwright.agent.exits import ExitParams, decide_exit
 from optionwright.agent.loop import Deps, run_cycle
 from optionwright.agent.state import compute_tick, position_clock
+from optionwright import reconcile
 from optionwright.broker import alpaca
 from optionwright.options.select import SelectParams
 from optionwright.policy.gates import RuleSet
@@ -155,6 +156,7 @@ def _manage_positions() -> list[dict]:
     vols: dict[str, float | None] = {}   # intraday vol per underlying per pass, for the trail
     book_delta_pct: float | None = None   # computed once per pass, only if a rule needs it
 
+    results.extend(_resolve_pending())
     all_positions = store.get_positions(200)
     metrics.set_position_gauges(all_positions)
     metrics.clear_position_info()  # re-populated below for currently-open positions
@@ -194,22 +196,141 @@ def _manage_positions() -> list[dict]:
                 "close" if decision.close else "hold", pnl_now,
             )
             if decision.close:
-                # Cross the spread by a few cents so the close actually fills (SPY/QQQ
-                # options are penny-wide). We estimate realized P&L from the mid.
-                close_limit = round(price + 0.05, 2)
-                alpaca.close_spread(pos["short_symbol"], pos["long_symbol"], pos["contracts"], close_limit)
-                store.close_position(pos["id"], pnl_now, decision.reason)
-                metrics.record_realized_pnl(pnl_now)
-                logger.info("closed position %s: %s, P&L %.2f", pos["id"], decision.reason, pnl_now)
-                results.append({"position_id": pos["id"], "action": "closed",
-                                "reason": decision.reason, "realized_pnl": pnl_now})
+                results.append(_close(pos, price, decision.reason))
             # Instrumentation AFTER the money decision: a tick that fails never
             # delays or blocks a close.
             _record_tick(pos, price, peak, decision, spots, snap, now, next_close)
         except Exception as exc:
             logger.error("manage position %s failed: %s", pos.get("id"), exc, exc_info=True)
             metrics.ERRORS.labels(where="manage").inc()
+    _reconcile()
     return results
+
+
+def _close(pos: dict, price: float, reason: str) -> dict:
+    """
+    Submit the close and learn whether it filled (tech-debt 1.1). The limit
+    crosses the mid by close_limit_step × (attempts + 1): a close that did not
+    fill last time is retried wider. Filled → closed with the P&L from the
+    actual fill (and the actual entry fill when known). Not filled within
+    close_fill_wait_s → the position is 'closing' and the next pass resolves it;
+    terminally unfilled → 'open' again with one more attempt. Never "closed" in
+    the DB while the legs are still at the broker.
+    """
+    from optionwright import metrics
+
+    s = get_settings()
+    attempts = int(pos.get("close_attempts") or 0)
+    steps = min(attempts + 1, s.close_limit_max_steps)
+    limit = round(price + s.close_limit_step * steps, 2)
+    order = alpaca.close_spread(pos["short_symbol"], pos["long_symbol"], pos["contracts"], limit)
+    order_id = order.get("id") if isinstance(order, dict) else None
+    st = alpaca.wait_for_fill(order_id, s.close_fill_wait_s) if order_id else {"status": "filled", "filled_avg_price": None}
+    status = str(st.get("status", "")).lower()
+    if status == "filled":
+        return _settle_close(pos, st.get("filled_avg_price"), price, reason)
+    if not order_id:
+        raise RuntimeError("close order returned no id")
+    store.mark_closing(pos["id"], order_id, reason)
+    if status in alpaca.TERMINAL_UNFILLED:
+        store.revert_closing(pos["id"])
+        metrics.ORDERS.labels(kind="close", result="reverted").inc()
+        logger.warning("close of %s %s (%s): attempt %d, will retry wider", pos["id"], status, order_id, attempts + 1)
+        return {"position_id": pos["id"], "action": "close_unfilled", "reason": reason, "status": status}
+    metrics.ORDERS.labels(kind="close", result="pending").inc()
+    logger.info("close of %s working (%s @ %.2f); resolved next pass", pos["id"], order_id, limit)
+    return {"position_id": pos["id"], "action": "closing", "reason": reason, "order_id": order_id}
+
+
+def _settle_close(pos: dict, fill_price: float | None, mid_price: float, reason: str) -> dict:
+    """Close the row with the P&L from the fills (entry fill when known, else the recorded credit)."""
+    from optionwright import metrics
+
+    entry = float(pos.get("fill_credit") or pos["credit"])
+    exit_price = float(fill_price) if fill_price is not None else float(mid_price)
+    pnl = round((entry - exit_price) * 100 * int(pos["contracts"]), 2)
+    store.close_position(pos["id"], pnl, reason, fill_exit_price=fill_price)
+    metrics.ORDERS.labels(kind="close", result="filled").inc()
+    logger.info("closed position %s: %s, P&L %.2f (fill %s)", pos["id"], reason, pnl, fill_price)
+    return {"position_id": pos["id"], "action": "closed", "reason": reason, "realized_pnl": pnl, "fill_price": fill_price}
+
+
+def _resolve_pending() -> list[dict]:
+    """Pending entries and working closes from earlier passes: ask the broker
+    what happened and move the row on. Runs before the rules look at anything."""
+    from optionwright import metrics
+
+    s = get_settings()
+    out = []
+    for row in store.pending_rows():
+        try:
+            st = alpaca.order_status(row["pending_order_id"]) if row.get("pending_order_id") else {"status": "unknown"}
+            status = str(st.get("status", "")).lower()
+            age = float(row.get("pending_age_s") or 0.0)
+            if row["status"] == "pending":
+                if status == "filled":
+                    store.confirm_fill(row["id"], st.get("filled_avg_price"))
+                    metrics.ORDERS.labels(kind="entry", result="filled").inc()
+                    out.append({"position_id": row["id"], "action": "entry_filled"})
+                elif status in alpaca.TERMINAL_UNFILLED or age > s.entry_order_max_age_s:
+                    if status not in alpaca.TERMINAL_UNFILLED:
+                        alpaca.cancel_order(row["pending_order_id"])
+                        status = f"canceled after {age:.0f}s"
+                    store.mark_unfilled(row["id"], f"entry {status}")
+                    metrics.ORDERS.labels(kind="entry", result="unfilled").inc()
+                    out.append({"position_id": row["id"], "action": "entry_unfilled", "status": status})
+            else:  # closing
+                if status == "filled":
+                    out.append(_settle_close(row, st.get("filled_avg_price"), float(row["credit"]), row.get("exit_reason") or "close"))
+                elif status in alpaca.TERMINAL_UNFILLED or age > s.close_order_max_age_s:
+                    if status not in alpaca.TERMINAL_UNFILLED:
+                        alpaca.cancel_order(row["pending_order_id"])
+                    store.revert_closing(row["id"])
+                    metrics.ORDERS.labels(kind="close", result="reverted").inc()
+                    out.append({"position_id": row["id"], "action": "close_reverted", "status": status})
+        except Exception as exc:
+            logger.error("resolving pending order for position %s failed: %s", row.get("id"), exc, exc_info=True)
+            metrics.ERRORS.labels(where="pending").inc()
+    return out
+
+
+_reconcile_ok = True
+_last_reconcile_alert = 0.0
+
+
+def reconciled() -> bool:
+    return _reconcile_ok
+
+
+def _reconcile() -> list:
+    """DB book vs broker book, every exits pass (tech-debt 1.2). A mismatch is
+    logged, gauged, sent to WhatsApp (rate-limited) and blocks new entries until
+    it clears. Never fixed automatically. A broker hiccup keeps the last state."""
+    global _reconcile_ok, _last_reconcile_alert
+    from optionwright import metrics
+    from optionwright.agent import notify
+
+    try:
+        expected = reconcile.expected_legs(store.live_legs_rows())
+        actual = alpaca.broker_option_positions()
+    except Exception as exc:
+        logger.warning("reconciliation skipped (%s); keeping state %s", exc, "ok" if _reconcile_ok else "MISMATCH")
+        return []
+    mism = reconcile.diff(expected, actual)
+    metrics.RECONCILE_MISMATCH.set(len(mism))
+    if mism:
+        _reconcile_ok = False
+        logger.error("RECONCILIATION MISMATCH (entries blocked): %s", "; ".join(map(str, mism)))
+        now = time.monotonic()
+        if now - _last_reconcile_alert > get_settings().reconcile_alert_minutes * 60:
+            _last_reconcile_alert = now
+            notify.send_whatsapp("🚨 optionwright: el libro en la base y el del bróker no coinciden; entradas bloqueadas hasta revisar.\n"
+                                 + "\n".join(f"• {m}" for m in mism))
+    else:
+        if not _reconcile_ok:
+            logger.info("reconciliation clean again; entries unblocked")
+        _reconcile_ok = True
+    return mism
 
 
 def _clock_inputs_safe(pos: dict, now, next_close) -> tuple[float | None, float | None, bool | None]:
@@ -332,6 +453,8 @@ def _build_deps(params: Params, underlying: str) -> Deps:
         memory=lambda u: store.recent_outcomes(u),
         book=lambda: store.llm_book_view(store.book_summary(rules.breaker_lookback_hours)),
         note_regime=store.note_regime,
+        wait_fill=lambda oid: alpaca.wait_for_fill(oid, s.entry_fill_wait_s),
+        cancel_order=alpaca.cancel_order,
         rich_context=s.agent_rich_context,
     )
 
@@ -363,6 +486,12 @@ def run_entries() -> list[dict]:
 
     # Fresh option chains for this pass; each underlying's chain is fetched once
     # and reused across its puts/calls reads (invalidated per pass, no TTL).
+    if not reconciled():
+        logger.error("entries skipped: DB and broker books do not match")
+        result = {"action": "skipped", "reason": "reconciliation mismatch"}
+        metrics.record_cycle(result)
+        return [result]
+
     alpaca.new_cycle()
     failed = {u: e for u, e in alpaca.prefetch_chains(s.underlyings_list, s.chain_prefetch_workers).items() if e}
     if failed:

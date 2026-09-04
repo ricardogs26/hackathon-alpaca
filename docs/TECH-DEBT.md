@@ -4,7 +4,7 @@ Reviewed on the code as deployed (phases 0-4 done in one day). Criticality:
 **C** can lose money or leave the book unmanaged · **A** high · **M** medium ·
 **L** low. "Resolves" says what goes wrong today.
 
-## 1 · Execution and reconciliation
+## 1 · Execution and reconciliation — **1.1, 1.2, 1.3 done in 0.9.0 (2026-09-04)**; 1.4 partly (limit widens by attempts, still in cents)
 | # | Activity | Crit | Resolves |
 |---|----------|------|----------|
 | 1.1 | **Order lifecycle**: after `submit_spread`/`close_spread` poll the order (id from the CLI JSON) until filled / cancelled / expired; on a close that is not filled keep the position OPEN and retry with a wider limit; record `fill_price` | C | Both functions assume a fill. A limit close that never fills leaves the DB saying "closed" while Alpaca still holds the spread: an **unmanaged position** with no rule watching it |

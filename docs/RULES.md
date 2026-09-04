@@ -116,3 +116,12 @@ Proposals land in `rule_proposals` with their evidence and reach WhatsApp.
 (or `/reject`) with the rules token; an approval goes through `set_rule`, so
 the history row says "proposal #N approved" and by whom. Unanswered proposals
 expire after 3 days.
+
+## Execution — what happens after a rule says "trade" (`broker/alpaca.py`, `agent/runner.py`)
+
+| Step | Rule |
+|------|------|
+| Entry | submit at the spread's net credit; wait `ENTRY_FILL_WAIT_S` (10 s). Filled → open with the net credit received. Terminally unfilled → no position. Still working → `pending` (counts as exposure); confirmed or cancelled (`ENTRY_ORDER_MAX_AGE_S`, 120 s) by the next exits pass |
+| Condor | the second wing is placed only after the first fills; a second wing that does not fill leaves the first standing as the directional spread it already passed the gates as, and the decision says so |
+| Close | submit at mid + `CLOSE_LIMIT_STEP` (0.05) × (attempts + 1), at most `CLOSE_LIMIT_MAX_STEPS` (6); wait `CLOSE_FILL_WAIT_S` (5 s). Filled → closed, P&L from the fills. Still working → `closing`, resolved next pass. Unfilled or older than `CLOSE_ORDER_MAX_AGE_S` (60 s) → cancelled, `open` again, retried wider next tick |
+| Reconciliation | every exits pass, DB legs (open + closing) vs the broker's option positions; a mismatch blocks entries, alerts on WhatsApp and is never fixed automatically |

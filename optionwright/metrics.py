@@ -94,6 +94,15 @@ def set_position_info(pos_id, underlying, credit, close_price, captured_pct, dec
         captured_pct=f"{captured_pct:.0f}%",
         decision=decision,
     ).set(pnl)
+ORDERS = Counter(
+    "optionwright_orders_total",
+    "Order outcomes by kind (entry|close) and result (filled|pending|unfilled|reverted)",
+    ["kind", "result"],
+)
+RECONCILE_MISMATCH = Gauge(
+    "optionwright_reconcile_mismatch",
+    "Option legs where the DB book and the broker book disagree (0 = reconciled)",
+)
 ERRORS = Counter(
     "optionwright_errors_total",
     "Errors during a cycle",

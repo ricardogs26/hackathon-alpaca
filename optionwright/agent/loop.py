@@ -52,6 +52,8 @@ class Deps:
     book: Callable[[], dict] = None                  # -> resumen de portafolio
     rich_context: bool = False
     note_regime: Callable[[int, str | None], None] = None   # (position_id, regime) -> None; phase 4 buckets
+    wait_fill: Callable[[str], dict] = None          # (order_id) -> {status, filled_avg_price}; None = assume filled (tests)
+    cancel_order: Callable[[str], bool] = None
 
 
 def _candidate_summary(spread: VerticalSpread | None) -> dict | None:
@@ -78,6 +80,29 @@ def _width(deps: Deps, underlying: str, contracts: list, sel: SelectParams) -> f
         logger.warning("spot for %s unavailable (%s); using fixed width", underlying, exc)
         return 5.0
     return width_for(spot, sel.width_pct, strike_step(contracts))
+
+
+_TERMINAL_UNFILLED = ("canceled", "expired", "rejected", "replaced", "done_for_day", "stopped", "suspended")
+
+
+def _place(deps: Deps, spread: VerticalSpread, n: int) -> tuple[int | None, str, dict | None, str | None]:
+    """
+    Submit and learn what happened (tech-debt 1.1). Returns (position_id, outcome, status):
+    outcome 'filled' (position open, fill credit recorded), 'pending' (order
+    still working: the exits pass will confirm or cancel it; it counts as
+    exposure meanwhile) or 'unfilled' (no position, no money moved).
+    """
+    order = deps.submit_spread(spread, n)
+    order_id = order.get("id") if isinstance(order, dict) else None
+    if deps.wait_fill is None or not order_id:
+        return deps.record_position(spread, n, order_id), "filled", None, order_id
+    st = deps.wait_fill(order_id)
+    status = str(st.get("status", "")).lower()
+    if status == "filled":
+        return deps.record_position(spread, n, order_id, status="open", fill_credit=st.get("filled_avg_price")), "filled", st, order_id
+    if status in _TERMINAL_UNFILLED:
+        return None, "unfilled", st, order_id
+    return deps.record_position(spread, n, order_id, status="pending"), "pending", st, order_id
 
 
 def _note_regime(deps: Deps, pos_id, regime: str | None) -> None:
@@ -113,17 +138,29 @@ def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, pro
         return {"underlying": underlying, "action": "vetoed", "reason": reason}
     n = min(v.contracts for _, v in verdicts)   # same size on both wings
     ids = []
-    for wing, v in verdicts:
-        order = deps.submit_spread(wing, n)
-        order_id = order.get("id") if isinstance(order, dict) else None
-        pos_id = deps.record_position(wing, n, order_id)
+    for i, (wing, v) in enumerate(verdicts):
+        pos_id, outcome, st, order_id = _place(deps, wing, n)
+        if outcome != "filled":
+            # First wing not filled: nothing stands, don't place the second. Second
+            # wing not filled: the first stands alone as the directional spread it
+            # already passed the gates as — said so in the decision.
+            if outcome == "pending" and pos_id is not None and i == 0 and deps.cancel_order is not None:
+                deps.cancel_order(order_id or "")
+            reason = f"condor {wing.direction.value} wing {outcome} ({(st or {}).get('status')})" + \
+                     ("" if i == 0 else "; the other wing stands alone")
+            deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
+                                 False, 0, reason, wing, pos_id)
+            if i == 0:
+                return {"underlying": underlying, "action": "unfilled", "reason": reason}
+            break
         _note_regime(deps, pos_id, regime)
         deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
                              True, n, f"condor {wing.direction.value} wing: {v.reason}", wing, pos_id)
         ids.append(pos_id)
     logger.info("cycle %s -> iron condor x%d (%s)", underlying, n, ids)
     return {"underlying": underlying, "action": "opened", "contracts": n, "direction": "neutral",
-            "structure": "iron_condor", "confidence": proposal.confidence, "position_ids": ids}
+            "structure": "iron_condor" if len(ids) == 2 else "half_condor", "confidence": proposal.confidence,
+            "position_ids": ids}
 
 
 def run_cycle(underlying: str, deps: Deps) -> dict:
@@ -201,13 +238,16 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
                              False, 0, verdict.reason, chosen)
         return {"underlying": underlying, "action": "vetoed", "reason": verdict.reason}
 
-    order = deps.submit_spread(chosen, verdict.contracts)
-    order_id = order.get("id") if isinstance(order, dict) else None
-    pos_id = deps.record_position(chosen, verdict.contracts, order_id)
+    pos_id, outcome, st, order_id = _place(deps, chosen, verdict.contracts)
+    if outcome == "unfilled":
+        reason = f"order {(st or {}).get('status')}: not filled"
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
+                             False, 0, reason, chosen)
+        return {"underlying": underlying, "action": "unfilled", "reason": reason}
     _note_regime(deps, pos_id, regime)
     deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
-                         True, verdict.contracts, verdict.reason, chosen, pos_id)
-    logger.info("cycle %s -> %s x%d (%s)", underlying, proposal.direction.value, verdict.contracts, order_id)
+                         True, verdict.contracts, verdict.reason + (" (pending fill)" if outcome == "pending" else ""), chosen, pos_id)
+    logger.info("cycle %s -> %s x%d (%s, %s)", underlying, proposal.direction.value, verdict.contracts, pos_id, outcome)
     return {"underlying": underlying, "action": "opened", "contracts": verdict.contracts,
             "direction": proposal.direction.value, "confidence": proposal.confidence,
-            "order_id": order_id, "position_id": pos_id}
+            "order_id": order_id, "position_id": pos_id, "fill": outcome}
