@@ -39,7 +39,7 @@ Reviewed on the code as deployed (phases 0-4 done in one day). Criticality:
 | 4.5 | Bull puts on indexes fail `min_reward_risk` (SPY 0.16, IWM 0.17 on 4-Sep) while bear calls pass: the book will tilt bearish by construction | M | A structural bias that the direction-share gate only partly corrects; consider R/R per right or per group |
 | 4.6 | Nightly memory has two proposal rules; group vol thresholds (3.5 % megacap) were set by hand from one day | M | Calibration by eye until the job learns it |
 
-## 5 · Code and tests
+## 5 · Code and tests — **5.1 and 5.2 done in 0.9.2 (2026-09-04)**
 | # | Activity | Crit | Resolves |
 |---|----------|------|----------|
 | 5.1 | **Postgres in CI** (service container) to test `store.py` (568 lines, zero tests: rules, proposals, ticks, policy state SQL) | A | Every SQL change is verified only by hand in the pod |

@@ -21,6 +21,13 @@ test:
 
 lint:
 	$(PY) -m ruff check optionwright tests
+	$(PY) scripts/check_dashboard_js.py
+
+# Throwaway Postgres for the DB tests (tests/test_store_db.py skip without one).
+db-up:
+	docker run -d --name ow-test-pg -e POSTGRES_USER=ow -e POSTGRES_PASSWORD=ow -e POSTGRES_DB=ow_test -p 55432:5432 postgres:16-alpine
+db-down:
+	docker rm -f ow-test-pg
 
 build:
 	docker build -t $(IMAGE):$(VERSION) .

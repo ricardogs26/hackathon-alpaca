@@ -40,3 +40,26 @@ def test_reconcile_endpoint_reports_mismatches_read_only(monkeypatch):
         r = c.get("/api/reconcile").json()
         assert r["ok"] is False and r["mismatches"] == [{"symbol": "L", "db": 1, "broker": 0}]
         assert "reconciled" in c.get("/api/status").json()
+
+
+def test_dashboard_is_served_from_the_static_file_with_its_panels(monkeypatch):
+    c, _ = _client(monkeypatch)
+    with c:
+        html = c.get("/").text
+        for marker in ('id="pstate"', 'id="positions"', 'id="decisions"', 'id="symfilters"', "renderState("):
+            assert marker in html
+        st = c.get("/api/status").json()
+        for key in ("version", "market_open", "next_open", "next_close", "cycle_seconds", "underlyings", "reconciled"):
+            assert key in st          # every key the dashboard JS reads
+
+
+def test_dashboard_script_parses_with_node():
+    import shutil
+    import subprocess
+    import sys
+
+    if not shutil.which("node"):
+        import pytest
+        pytest.skip("node not installed")
+    r = subprocess.run([sys.executable, "scripts/check_dashboard_js.py"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr

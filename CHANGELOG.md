@@ -5,6 +5,20 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.9.2 — 2026-09-04 · tech-debt 5.1 and 5.2
+
+- **Postgres in CI** (`tests/test_store_db.py`, a `postgres:16` service in the
+  workflow; locally `make db-up` — the tests skip without a database). 14 tests
+  drive `store.py` end to end on a real schema: the order-lifecycle state
+  machine, exposure counting, ticks and net delta, decisions, equity, rules
+  with history and bounds, proposals, the breaker window. First run found a
+  real bug: `decide_proposal` read `description` from the connection instead
+  of the cursor and would have crashed on the first approval.
+- **Dashboard as a static file** (`api/static/dashboard.html`) served by `/`,
+  and `scripts/check_dashboard_js.py` (node syntax check of every script
+  block) in `make lint` and CI — the check that would have caught 0.5.1. A
+  page test asserts the panels and every `/api/status` key the JS reads.
+
 ## 0.9.1 — 2026-09-04 · tech-debt 6.1 and 6.3
 
 - **External heartbeat** (`agent/heartbeat.py`, CronJob

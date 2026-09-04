@@ -302,6 +302,6 @@ def decisions(limit: int = 30) -> list[dict]:
 def dashboard():
     from fastapi.responses import HTMLResponse
 
-    from optionwright.api.dashboard import DASHBOARD_HTML
+    from optionwright.api.dashboard import dashboard_html
 
-    return HTMLResponse(DASHBOARD_HTML)
+    return HTMLResponse(dashboard_html())

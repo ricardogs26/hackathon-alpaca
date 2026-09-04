@@ -178,11 +178,11 @@ def expire_proposals(days: int) -> int:
 def decide_proposal(proposal_id: int, approve: bool, decided_by: str) -> dict:
     """Approve = apply through set_rule (history row says who and why); reject = mark."""
     with _conn() as c:
-        row = c.execute("SELECT * FROM rule_proposals WHERE id=%s", (proposal_id,)).fetchone()
+        cur = c.execute("SELECT * FROM rule_proposals WHERE id=%s", (proposal_id,))
+        row = cur.fetchone()
         if row is None:
             raise KeyError(f"proposal {proposal_id} not found")
-        cols = [d[0] for d in c.description]
-        p = dict(zip(cols, row))
+        p = dict(zip([d[0] for d in cur.description], row))
         if p["status"] != "pending":
             raise ValueError(f"proposal {proposal_id} is {p['status']}")
         c.execute("UPDATE rule_proposals SET status=%s, decided_by=%s, decided_at=now() WHERE id=%s",
