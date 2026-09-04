@@ -5,6 +5,30 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.7.0 — 2026-09-04 · phase 3: perception
+
+- **Intraday perception** (`perception.compute_intraday`): from today's
+  1-minute bars — VWAP and the price's position against it, the 30-minute
+  trend (`intraday_trend_pct`, 0.25 %), intraday realized vol scaled to a
+  daily figure (`intraday_vol_high_pct`, 1.2 %) and the day's range. Merged
+  with the daily view; `regimen` is volatile if either is. The 5-day daily
+  trend sold calls at the bottom of the 1-2 Sep pull-back and said "baja"
+  through the 3-Sep rebound; the 30-minute read turns the same morning.
+- **Volatile regime** (`volatile_mode`, default `neutral`): directional
+  proposals are not taken, only iron condors, and the short legs move to
+  `short_delta_volatile` (0.20). `none` = no entries at all; `directional` =
+  no restriction.
+- **Iron condor** (`direction: neutral`): the bull put AND the bear call,
+  each gated and recorded as its own position, same size on both wings; both
+  must exist and both must pass, else nothing opens. The model is told to use
+  it only with a sideways trend in a calm regime. Sizing is per wing (1 %
+  each): conservative, since only one wing can lose.
+- **Trailing in sigma terms** (`trail_vol_ref_pct`, 0.8): the give-back
+  scales with today's realized vol against the reference, clamped 0.5x-2x —
+  7 points on a normal day, 14 when the underlying moves twice as much,
+  3.5 when it sleeps. 0 restores fixed points.
+- 16 new tests (189 total).
+
 ## 0.6.1 — 2026-09-04
 
 - **The loss breaker gets a window** (`breaker_lookback_hours`, 24). The first

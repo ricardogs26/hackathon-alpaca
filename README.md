@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-171%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-189%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
 [Live dashboard](https://optionwright.richardx.dev) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
@@ -64,7 +64,11 @@ gets to have an opinion; it never decides how much money is on the line.
 Defined-risk credit vertical spreads on the most liquid weekly options.
 
 - A **bull put spread** when the model reads bullish, a **bear call spread** when
-  bearish. Both are credit spreads with a capped max loss of `width − credit`.
+  bearish, both together (an **iron condor**) when it reads neutral. All are
+  credit spreads with a capped max loss of `width − credit`.
+- In a **volatile regime** (daily or intraday realized vol above a threshold)
+  directional entries are off: only condors, with the short legs farther from
+  the money.
 - Underlyings in **correlation groups** (`UNDERLYING_GROUPS`): index ETFs
   (SPY, QQQ, IWM) and megacaps (AAPL, NVDA, AMZN, TSLA). Caps and cooldowns
   count per group, because three spreads on SPY, QQQ and IWM are one bet. The
@@ -118,8 +122,9 @@ credit.
   is the only stop when the delta is unknown.
 - **Take-profit by time**: 50 % of the credit with more than a day to expiry,
   25 % in the last hours (the theta is collected; the gamma left isn't worth it).
-- **Trailing take-profit**: arms at 30 % captured and closes 7 points below
-  the peak, so a runner that reverses still exits in the green.
+- **Trailing take-profit**: arms at 30 % captured and closes below the peak by
+  a give-back that scales with the day's realized volatility (7 points on a
+  normal day), so a runner that reverses still exits in the green.
 - **Overnight rule**: in `flat` mode every position that would sleep is closed
   30 min before the close; in `delta` mode a position may sleep only if it is
   small and the book is balanced.
@@ -130,11 +135,13 @@ shows where a candidate set of parameters would have closed each real position.
 
 ## The model
 
-- The analyzer's only output is `{direction, confidence, rationale}`. It never
-  does arithmetic and never sizes a trade.
+- The analyzer's only output is `{direction, confidence, rationale}`, with
+  direction one of bullish, bearish, neutral or abstain. It never does
+  arithmetic and never sizes a trade.
 - **What it sees** (`AGENT_RICH_CONTEXT`): besides the two pre-built spreads, the
   model gets market signals computed in code as categorical flags (5-day trend,
-  momentum vs moving average, realized-volatility regime), its recent outcomes on
+  momentum vs moving average, the 30-minute intraday trend, VWAP position,
+  daily and intraday realized-volatility regime), its recent outcomes on
   that underlying (wins by direction), and a summary of the open book (open
   count, today's P&L, losing streak). It reasons over all of that, but every
   number is resolved in code; the model never compares raw numbers. Direction
@@ -199,7 +206,7 @@ optionwright/
   storage/    Postgres schema + reads (orders, equity, decisions)
   api/        FastAPI: read-only endpoints, the rules API + the live dashboard
   replay.py   the exit rules over recorded ticks, simulated vs actual
-tests/        171 tests over the deterministic core
+tests/        189 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -223,7 +230,7 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 171 tests, no network or account needed
+pytest -q          # 189 tests, no network or account needed
 ```
 
 The deterministic core (spread selection, the risk gates, exit decisions, market

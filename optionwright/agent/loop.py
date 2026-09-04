@@ -79,6 +79,42 @@ def _width(deps: Deps, underlying: str, contracts: list, sel: SelectParams) -> f
     return width_for(spot, sel.width_pct, strike_step(contracts))
 
 
+def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, proposal: Proposal,
+                 bull_put: VerticalSpread | None, bear_call: VerticalSpread | None) -> dict:
+    """
+    Iron condor = the bull put AND the bear call, each gated and recorded as its
+    own position (the exits manage each wing: the winning wing closes on its
+    take-profit, the other on its own rule). Both wings must exist and both must
+    pass the gates, else nothing is opened — half a condor is a directional bet
+    nobody asked for. Sizing is per wing (1% each), conservative: only one wing
+    can lose at expiry, so the structure's true max loss is the larger wing.
+    """
+    if bull_put is None or bear_call is None:
+        reason = "neutral needs both wings; missing " + ("bull put" if bull_put is None else "bear call")
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, None)
+        return {"underlying": underlying, "action": "abstain", "reason": reason}
+    state = deps.build_state(underlying, equity)
+    verdicts = [(w, evaluate(w, _SIZE_CEILING, state, rules, confidence=proposal.confidence)) for w in (bull_put, bear_call)]
+    failed = [(w, v) for w, v in verdicts if not v.approved]
+    if failed:
+        w, v = failed[0]
+        reason = f"condor {w.direction.value} wing: {v.reason}"
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, w)
+        return {"underlying": underlying, "action": "vetoed", "reason": reason}
+    n = min(v.contracts for _, v in verdicts)   # same size on both wings
+    ids = []
+    for wing, v in verdicts:
+        order = deps.submit_spread(wing, n)
+        order_id = order.get("id") if isinstance(order, dict) else None
+        pos_id = deps.record_position(wing, n, order_id)
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
+                             True, n, f"condor {wing.direction.value} wing: {v.reason}", wing, pos_id)
+        ids.append(pos_id)
+    logger.info("cycle %s -> iron condor x%d (%s)", underlying, n, ids)
+    return {"underlying": underlying, "action": "opened", "contracts": n, "direction": "neutral",
+            "structure": "iron_condor", "confidence": proposal.confidence, "position_ids": ids}
+
+
 def run_cycle(underlying: str, deps: Deps) -> dict:
     rules = deps.rules or RuleSet()
     equity, cash = deps.account()
@@ -90,11 +126,15 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
                              False, 0, "no expiry", None)
         return {"underlying": underlying, "action": "abstain", "reason": "no expiry"}
 
+    # Perception first: the regime decides how far from the money we sell.
+    signals = _safe(lambda: deps.signals(underlying, expiry)) if (deps.rich_context and deps.signals) else {}
+    regime = signals.get("regimen")
+
     puts = deps.fetch_chain(underlying, expiry, Right.PUT)
     calls = deps.fetch_chain(underlying, expiry, Right.CALL)
     sel = deps.select or SelectParams()
     width = _width(deps, underlying, puts + calls, sel)
-    kw = dict(short_delta=sel.short_delta, width=width, width_tolerance=sel.width_tolerance,
+    kw = dict(short_delta=sel.delta_for(regime), width=width, width_tolerance=sel.width_tolerance,
               min_oi=sel.min_open_interest, max_spread_pct=sel.max_quote_spread_pct)
     bull_put = build_spread(puts, Direction.BULLISH, expiry, **kw)
     bear_call = build_spread(calls, Direction.BEARISH, expiry, **kw)
@@ -107,6 +147,12 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
                              False, 0, "illiquid chain", None)
         return {"underlying": underlying, "action": "abstain", "reason": "illiquid chain"}
 
+    # Volatile regime, mode "none": short gamma has no business here today.
+    if regime == "volatil" and sel.volatile_mode == "none":
+        deps.record_decision(underlying, Direction.ABSTAIN, None, "volatile regime: entries disabled",
+                             False, 0, "volatile regime", None)
+        return {"underlying": underlying, "action": "abstain", "reason": "volatile regime"}
+
     context = {
         "underlying": underlying,
         "expiry": expiry,
@@ -114,10 +160,20 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
         "bear_call_spread": _candidate_summary(bear_call),
     }
     if deps.rich_context and deps.signals and deps.memory and deps.book:
-        context["signals"] = _safe(lambda: deps.signals(underlying, expiry))
+        context["signals"] = signals
         context["memoria"] = _safe(lambda: deps.memory(underlying))
         context["portafolio"] = _safe(deps.book)
     proposal = deps.propose(context)
+
+    # Volatile regime, mode "neutral": a directional proposal is not taken; only
+    # a condor (both sides, farther from the money) may be opened.
+    if regime == "volatil" and sel.volatile_mode == "neutral" and proposal.direction in (Direction.BULLISH, Direction.BEARISH):
+        reason = f"volatile regime: directional {proposal.direction.value} not taken"
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, None)
+        return {"underlying": underlying, "action": "vetoed", "reason": reason}
+
+    if proposal.direction is Direction.NEUTRAL:
+        return _open_condor(underlying, deps, rules, equity, proposal, bull_put, bear_call)
 
     chosen = bull_put if proposal.direction is Direction.BULLISH else bear_call if proposal.direction is Direction.BEARISH else None
     if proposal.direction is Direction.ABSTAIN or chosen is None:

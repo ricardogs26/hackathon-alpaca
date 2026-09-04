@@ -180,3 +180,69 @@ def test_spot_failure_falls_back_to_the_fixed_width():
     deps.spot = lambda u: (_ for _ in ()).throw(RuntimeError("quote down"))
     res = run_cycle("SPY", deps)
     assert res["action"] == "opened" and rec.positions[0][0].width == 5.0
+
+
+# ── phase 3: neutral (iron condor) and the volatile regime ──────────────────
+def _rich(deps, regime="tranquilo"):
+    deps.rich_context = True
+    deps.signals = lambda u, e: {"tendencia_5d": "lateral", "regimen": regime}
+    deps.memory = lambda u: {"cerradas": 0}
+    deps.book = lambda: {"abiertas": 0}
+    return deps
+
+
+def test_neutral_opens_both_wings_with_the_same_size():
+    rec = _Recorder()
+    res = run_cycle("SPY", _rich(rec.deps(Proposal(Direction.NEUTRAL, 0.8, "rango"))))
+    assert res["action"] == "opened" and res["structure"] == "iron_condor" and len(res["position_ids"]) == 2
+    assert {sp.direction for sp, n in rec.submitted} == {Direction.BULLISH, Direction.BEARISH}
+    assert len({n for sp, n in rec.submitted}) == 1
+    assert sum(1 for a, k in rec.decisions if a[4]) == 2          # two approved decisions, one per wing
+
+
+def test_neutral_with_a_missing_wing_opens_nothing():
+    rec = _Recorder()
+    deps = _rich(rec.deps(Proposal(Direction.NEUTRAL, 0.8, "rango")))
+    deps.fetch_chain = lambda u, e, r: _put_chain() if r is Right.PUT else []     # no calls: no bear wing
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "abstain" and "missing bear call" in res["reason"] and rec.submitted == []
+
+
+def test_neutral_vetoed_if_either_wing_fails_a_gate():
+    rec = _Recorder()
+    deps = _rich(rec.deps(Proposal(Direction.NEUTRAL, 0.5, "rango")))       # below min_confidence
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "vetoed" and "condor bullish wing: low confidence" in res["reason"] and rec.submitted == []
+
+
+def test_volatile_regime_neutral_mode_refuses_directional_and_sells_farther():
+    rec = _Recorder()
+    deps = _rich(rec.deps(Proposal(Direction.BEARISH, 0.9, "baja")), regime="volatil")
+    deps.select = SelectParams(short_delta=0.30, short_delta_volatile=0.20, volatile_mode="neutral")
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "vetoed" and "volatile regime" in res["reason"] and rec.submitted == []
+    rec2 = _Recorder()
+    deps2 = _rich(rec2.deps(Proposal(Direction.NEUTRAL, 0.9, "rango")), regime="volatil")
+    deps2.select = SelectParams(short_delta=0.30, short_delta_volatile=0.20, volatile_mode="neutral")
+    run_cycle("SPY", deps2)
+    assert all(abs(sp.short_leg.delta) == 0.20 for sp, n in rec2.submitted)   # the 0.20-delta legs of the fixture
+
+
+def test_volatile_regime_none_mode_abstains_without_the_llm():
+    rec = _Recorder()
+    calls = {"n": 0}
+    deps = _rich(rec.deps(None), regime="volatil")
+    deps.propose = lambda ctx: calls.__setitem__("n", calls["n"] + 1) or Proposal(Direction.NEUTRAL, 0.9, "x")
+    deps.select = SelectParams(volatile_mode="none")
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "abstain" and res["reason"] == "volatile regime" and calls["n"] == 0
+
+
+def test_volatile_regime_directional_mode_trades_normally():
+    from optionwright.policy.gates import RuleSet
+
+    rec = _Recorder()
+    deps = _rich(rec.deps(Proposal(Direction.BULLISH, 0.9, "up")), regime="volatil")
+    deps.select = SelectParams(volatile_mode="directional")
+    deps.rules = RuleSet(min_reward_risk=0.1)     # the 0.20-delta wing of the fixture pays 0.16
+    assert run_cycle("SPY", deps)["action"] == "opened"

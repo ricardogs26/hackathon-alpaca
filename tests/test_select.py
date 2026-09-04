@@ -144,3 +144,10 @@ def test_select_params_from_the_table_with_scopes():
     assert SelectParams.from_params(prm).width_pct == 0.01 and SelectParams.from_params(prm).short_delta == 0.30
     assert SelectParams.from_params(prm, group="megacap").short_delta == 0.25
     assert SelectParams.from_params(prm).min_open_interest == 100
+
+
+def test_delta_for_regime_and_volatile_params_from_table():
+    sel = SelectParams(short_delta=0.30, short_delta_volatile=0.20)
+    assert sel.delta_for("volatil") == 0.20 and sel.delta_for("tranquilo") == 0.30 and sel.delta_for(None) == 0.30
+    prm = Params({GLOBAL: {"volatile_mode": "none", "short_delta_volatile": 0.15}})
+    assert SelectParams.from_params(prm).volatile_mode == "none" and SelectParams.from_params(prm).short_delta_volatile == 0.15

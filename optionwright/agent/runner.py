@@ -152,6 +152,7 @@ def _manage_positions() -> list[dict]:
     today = date.today().isoformat()
     results = []
     spots: dict[str, float] = {}   # one spot read per underlying per pass, for the ticks
+    vols: dict[str, float | None] = {}   # intraday vol per underlying per pass, for the trail
     book_delta_pct: float | None = None   # computed once per pass, only if a rule needs it
 
     all_positions = store.get_positions(200)
@@ -179,10 +180,11 @@ def _manage_positions() -> list[dict]:
             hours_to_expiry, hours_to_close, sleeps = _clock_inputs_safe(pos, now, next_close)
             if xp.overnight_mode == "delta" and sleeps and book_delta_pct is None:
                 book_delta_pct = _book_delta_pct()
+            vol = _intraday_vol_safe(pos["underlying"], vols) if xp.trail_vol_ref_pct else None
             decision = decide_exit(
                 credit, price, is_expiry_day, peak_captured=peak, params=xp,
                 short_delta=short_delta, hours_to_expiry=hours_to_expiry, hours_to_close=hours_to_close,
-                sleeps_tonight=sleeps, book_net_delta_pct=book_delta_pct,
+                sleeps_tonight=sleeps, book_net_delta_pct=book_delta_pct, vol_intradia_pct=vol,
             )
             captured_pct = captured * 100
             pnl_now = round((credit - price) * 100 * pos["contracts"], 2)
@@ -271,6 +273,39 @@ _record_tick_impl = _record_tick         # tests patch `_record_tick`; this keep
 _current_params_impl = current_params    # same for `current_params`
 
 
+def _signals(underlying: str, params: Params, group: str | None) -> dict:
+    """Daily perception (5-day trend, SMAs, regime) merged with today's intraday
+    read (VWAP, 30-min trend, intraday vol). The intraday part degrades to {}
+    on any hiccup — the daily view still reaches the model."""
+    s = get_settings()
+    spot = alpaca.get_spot(underlying)
+    daily = perception.compute_signals(alpaca.recent_bars(underlying), spot,
+                                       trend_flat_pct=s.perception_trend_flat_pct, vol_high_pct=s.perception_vol_high_pct)
+    try:
+        intraday = perception.compute_intraday(
+            alpaca.intraday_bars(underlying), spot,
+            trend_pct=params.get("intraday_trend_pct", underlying, group),
+            vol_high_pct=params.get("intraday_vol_high_pct", underlying, group))
+    except Exception as exc:
+        logger.warning("intraday perception for %s unavailable: %s", underlying, exc)
+        intraday = {}
+    return perception.merge_signals(daily, intraday)
+
+
+def _intraday_vol_safe(underlying: str, cache: dict[str, float | None]) -> float | None:
+    """Today's realized vol of the underlying for the trailing rule, once per pass; None if unknown."""
+    if underlying in cache:
+        return cache[underlying]
+    try:
+        bars = alpaca.intraday_bars(underlying)
+        sig = perception.compute_intraday(bars, bars[-1]["close"]) if bars else {}
+        cache[underlying] = sig.get("vol_intradia_pct")
+    except Exception as exc:
+        logger.warning("intraday vol for %s unavailable: %s", underlying, exc)
+        cache[underlying] = None
+    return cache[underlying]
+
+
 def _build_deps(params: Params, underlying: str) -> Deps:
     """Dependencies for one underlying's cycle. Rules resolve per underlying
     (precedence underlying > group > global) from the parameter table; the
@@ -294,11 +329,7 @@ def _build_deps(params: Params, underlying: str) -> Deps:
         rules=rules,
         select=SelectParams.from_params(params, underlying, group),
         spot=alpaca.get_spot,
-        signals=lambda u, e: perception.compute_signals(
-            alpaca.recent_bars(u), alpaca.get_spot(u),
-            trend_flat_pct=s.perception_trend_flat_pct,
-            vol_high_pct=s.perception_vol_high_pct,
-        ),
+        signals=lambda u, e: _signals(u, params, group),
         memory=lambda u: store.recent_outcomes(u),
         book=lambda: store.llm_book_view(store.book_summary(rules.breaker_lookback_hours)),
         rich_context=s.agent_rich_context,

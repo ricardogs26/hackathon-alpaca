@@ -108,3 +108,26 @@ def test_exit_params_from_params_respects_scopes():
     assert ExitParams.from_params(prm, underlying="QQQ").stop_delta == 0.50
     assert ExitParams.from_params(prm).overnight_mode == "delta"
     assert ExitParams.from_params(prm).take_profit_far == 0.50    # default flows through
+
+
+# ── phase 3: trailing in sigma terms ─────────────────────────────────────────
+from optionwright.agent.exits import trail_giveback_for  # noqa: E402
+
+
+def test_trail_giveback_scales_with_intraday_vol_and_clamps():
+    p = ExitParams(trail_giveback=0.07, trail_vol_ref_pct=0.8)
+    assert trail_giveback_for(p, 0.8) == 0.07
+    assert trail_giveback_for(p, 1.6) == 0.14          # twice the movement, twice the room
+    assert trail_giveback_for(p, 0.2) == 0.035         # clamped at 0.5x
+    assert trail_giveback_for(p, 5.0) == 0.14          # clamped at 2x
+    assert trail_giveback_for(p, None) == 0.07         # unknown: fixed
+    assert trail_giveback_for(ExitParams(trail_vol_ref_pct=0.0), 3.0) == 0.07   # feature off
+
+
+def test_trailing_uses_the_scaled_giveback():
+    p = ExitParams(trail_giveback=0.07, trail_vol_ref_pct=0.8)
+    # peak 34%, now 24%: a 10-pt pull-back closes on a calm day (7) but holds on a volatile one (14)
+    calm = decide_exit(1.0, 0.76, False, peak_captured=0.34, params=p, hours_to_expiry=48, vol_intradia_pct=0.8)
+    wild = decide_exit(1.0, 0.76, False, peak_captured=0.34, params=p, hours_to_expiry=48, vol_intradia_pct=1.6)
+    assert calm.close and "give-back 7%" in calm.reason
+    assert not wild.close

@@ -49,13 +49,20 @@ unknown means the gate is skipped, never that it invents a number.
 
 | Parameter (default) | What it does |
 |---------------------|--------------|
-| `short_delta` (0.30) | target \|delta\| of the short leg |
+| `short_delta` (0.30) / `short_delta_volatile` (0.20) | target \|delta\| of the short leg; farther from the money when the regime is volatile |
+| `volatile_mode` (neutral) | in a volatile regime: `neutral` = only iron condors, `none` = no entries, `directional` = no restriction |
+| `intraday_trend_pct` (0.25) / `intraday_vol_high_pct` (1.2) | perception: the 30-minute move that reads as a trend, and the intraday realized vol (daily-equivalent %) above which the regime is volatile |
 | `width_pct` (0.0065) | spread width as a fraction of spot, snapped to the chain's strike step: SPY 770 → 5, IWM 295 → 2, AAPL 320 → 2.5 |
 | `width_tolerance` (0.5) | the long leg must sit within this fraction of the width from the target, otherwise no spread (never a silent 10-wide) |
 | `min_open_interest` (100) / `max_quote_spread_pct` (0.15) | a leg is liquid only with this much open interest and a bid-ask no wider than 15 % of the mid |
 
 With no tradable spread on either side the cycle abstains (`illiquid chain`)
 without calling the model. Universe and groups: `UNDERLYING_GROUPS`.
+
+The model answers `bullish`, `bearish`, `neutral` or `abstain`. **Neutral** is
+an iron condor: the bull put and the bear call together, each gated and
+recorded as its own position with the same size; if either wing is missing or
+fails a gate, nothing opens.
 
 ## Exits — by state (`agent/exits.py`)
 
@@ -68,7 +75,7 @@ snapshot of the short leg and the clock. In this order:
 | 2 | Stop by delta | `stop_delta` (0.45) | the short leg's \|delta\| reached 0.45: the thesis is dead, whatever the P&L |
 | 3 | Stop by credit | `stop_mult` (1.0) | the loss reached 1.0× the credit (cap under the delta stop, and the only stop when delta is unknown) |
 | 4 | Take-profit by time | `take_profit_far` (0.50) / `take_profit_near` (0.25) / `take_profit_step_hours` (24) | captured ≥ 50 % with more than 24 h to expiry, ≥ 25 % in the last 24 h |
-| 5 | Trailing take-profit | `trail_activation` (0.30) / `trail_giveback` (0.07) | armed at 30 % captured, closes 7 pts below the peak |
+| 5 | Trailing take-profit | `trail_activation` (0.30) / `trail_giveback` (0.07) / `trail_vol_ref_pct` (0.8) | armed at 30 % captured, closes below the peak by a give-back of 7 pts at the reference vol, scaled by today's intraday realized vol (0.5x-2x) |
 | 6 | Overnight | `overnight_mode` (flat) / `flatten_minutes_before_close` (30) | **flat**: every position that would sleep is closed 30 min before the close. **delta**: it may sleep only if its short \|delta\| ≤ `overnight_max_short_delta` (0.35) and the book's \|net delta\| ≤ `overnight_net_delta_pct` (0.03) of equity; unknown means close |
 
 Why these, in one line each (post-mortem of 31-Aug → 3-Sep-2026):

@@ -124,6 +124,36 @@ def recent_bars(underlying: str, days: int = 30) -> list[float]:
     return closes
 
 
+_INTRADAY_TTL_SECONDS = 60
+_intraday_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def intraday_bars(underlying: str) -> list[dict]:
+    """Today's 1-minute bars (IEX feed — the free plan can't read recent SIP),
+    cached 60s: the entries pass and the exits pass share one read."""
+    import time
+    from datetime import datetime, timedelta, timezone
+
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+
+    now = time.monotonic()
+    hit = _intraday_cache.get(underlying)
+    if hit and hit[0] > now:
+        return hit[1]
+    today = datetime.now(timezone.utc).date()
+    start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=13)
+    resp = _stock_data_client().get_stock_bars(StockBarsRequest(
+        symbol_or_symbols=underlying, timeframe=TimeFrame.Minute, feed=DataFeed.IEX, start=start))
+    bars = resp.data.get(underlying, []) if hasattr(resp, "data") else []
+    out = [{"ts": b.timestamp, "open": float(b.open), "high": float(b.high), "low": float(b.low),
+            "close": float(b.close), "volume": float(b.volume or 0)} for b in bars]
+    if out:
+        _intraday_cache[underlying] = (now + _INTRADAY_TTL_SECONDS, out)
+    return out
+
+
 def get_spot(underlying: str) -> float:
     from alpaca.data.requests import StockLatestTradeRequest
 

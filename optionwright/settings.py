@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     take_profit_step_hours: float = Field(default=24.0, alias="TAKE_PROFIT_STEP_HOURS")
     trail_activation: float = Field(default=0.30, alias="TRAIL_ACTIVATION")
     trail_giveback: float = Field(default=0.07, alias="TRAIL_GIVEBACK")
+    trail_vol_ref_pct: float = Field(default=0.8, alias="TRAIL_VOL_REF_PCT")
     overnight_mode: str = Field(default="flat", alias="OVERNIGHT_MODE")
     flatten_minutes_before_close: float = Field(default=30.0, alias="FLATTEN_MINUTES_BEFORE_CLOSE")
     overnight_max_short_delta: float = Field(default=0.35, alias="OVERNIGHT_MAX_SHORT_DELTA")
@@ -76,6 +77,10 @@ class Settings(BaseSettings):
     group_cooldown_seconds: float = Field(default=1800.0, alias="GROUP_COOLDOWN_SECONDS")
     # selection
     short_delta: float = Field(default=0.30, alias="SHORT_DELTA")
+    short_delta_volatile: float = Field(default=0.20, alias="SHORT_DELTA_VOLATILE")
+    volatile_mode: str = Field(default="neutral", alias="VOLATILE_MODE")
+    intraday_trend_pct: float = Field(default=0.25, alias="INTRADAY_TREND_PCT")
+    intraday_vol_high_pct: float = Field(default=1.2, alias="INTRADAY_VOL_HIGH_PCT")
     width_pct: float = Field(default=0.0065, alias="WIDTH_PCT")
     width_tolerance: float = Field(default=0.5, alias="WIDTH_TOLERANCE")
     min_open_interest: int = Field(default=100, alias="MIN_OPEN_INTEREST")

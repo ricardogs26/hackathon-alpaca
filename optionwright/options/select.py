@@ -48,6 +48,8 @@ def liquid_contracts(chain: list[OptionQuote], right: Right, expiry: str, *,
 class SelectParams:
     """Selection knobs, resolved from the rules table per underlying/group."""
     short_delta: float = 0.30
+    short_delta_volatile: float = 0.20 # farther from the money when the regime is volatile
+    volatile_mode: str = "neutral"     # neutral | none | directional
     width_pct: float = 0.0065          # of spot; SPY 770 -> 5.0, IWM 295 -> 2.0, AAPL 320 -> 2.0
     width_tolerance: float = 0.5       # long leg within ±50% of the target width, else no spread
     min_open_interest: int = MIN_OPEN_INTEREST
@@ -56,8 +58,12 @@ class SelectParams:
     @classmethod
     def from_params(cls, params, underlying: str | None = None, group: str | None = None) -> "SelectParams":
         g = lambda k: params.get(k, underlying, group)  # noqa: E731
-        return cls(short_delta=g("short_delta"), width_pct=g("width_pct"), width_tolerance=g("width_tolerance"),
+        return cls(short_delta=g("short_delta"), short_delta_volatile=g("short_delta_volatile"),
+                   volatile_mode=g("volatile_mode"), width_pct=g("width_pct"), width_tolerance=g("width_tolerance"),
                    min_open_interest=g("min_open_interest"), max_quote_spread_pct=g("max_quote_spread_pct"))
+
+    def delta_for(self, regime: str | None) -> float:
+        return self.short_delta_volatile if regime == "volatil" else self.short_delta
 
 
 def strike_step(contracts: list[OptionQuote]) -> float:

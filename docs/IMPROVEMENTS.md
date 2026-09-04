@@ -42,7 +42,11 @@ IV feed is validated. Kept below for the record.
 | 2.4 | Duplicate guard also on the same short strike within a group | M | three SPY 767 calls |
 | 2.5 | Diagnose why IWM never had a liquid spread | M | zero entries all week |
 
-## Phase 3 · perception (3-5 days)
+## Phase 3 · perception — **done in 0.7.0 (2026-09-04)**
+3.1–3.4 shipped: intraday signals (VWAP, 30-min trend, intraday vol), volatile
+regime → condors only at 0.20 delta, iron condor on `neutral`, trailing scaled
+by realized vol. IV from Alpaca still not used as a signal (see phase 2 note).
+Kept below for the record.
 | # | Activity | Crit | Addresses |
 |---|---|---|---|
 | 3.1 | Intraday signals: VWAP, 30-min trend, intraday realized vol, IV | C | sold calls at the bottom; 0 bullish until Thursday |

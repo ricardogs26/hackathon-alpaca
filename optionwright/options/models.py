@@ -16,6 +16,7 @@ class Right(str, Enum):
 class Direction(str, Enum):
     BULLISH = "bullish"
     BEARISH = "bearish"
+    NEUTRAL = "neutral"      # iron condor: bull put + bear call, the price stays in the range
     ABSTAIN = "abstain"
 
 

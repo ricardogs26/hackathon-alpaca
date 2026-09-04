@@ -91,6 +91,14 @@ spec:
             # selection
             - name: SHORT_DELTA
               value: "0.30"
+            - name: SHORT_DELTA_VOLATILE
+              value: "0.20"
+            - name: VOLATILE_MODE
+              value: "neutral"
+            - name: INTRADAY_TREND_PCT
+              value: "0.25"
+            - name: INTRADAY_VOL_HIGH_PCT
+              value: "1.2"
             - name: WIDTH_PCT
               value: "0.0065"
             - name: WIDTH_TOLERANCE
@@ -138,6 +146,8 @@ spec:
               value: "0.30"
             - name: TRAIL_GIVEBACK
               value: "0.07"
+            - name: TRAIL_VOL_REF_PCT
+              value: "0.8"
             - name: OVERNIGHT_MODE
               value: "flat"
             - name: FLATTEN_MINUTES_BEFORE_CLOSE

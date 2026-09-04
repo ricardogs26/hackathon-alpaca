@@ -45,7 +45,8 @@ def _settings(**over):
     from optionwright.universe import flat_universe
 
     base = dict(underlyings_list=["SPY", "QQQ", "IWM"], universe=flat_universe(["SPY", "QQQ", "IWM"]),
-                chain_prefetch_workers=3, cycle_seconds=180, exit_check_seconds=60)
+                chain_prefetch_workers=3, cycle_seconds=180, exit_check_seconds=60,
+                perception_trend_flat_pct=1.0, perception_vol_high_pct=1.2)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -164,6 +165,7 @@ def _wire_store(monkeypatch, positions, price, raise_for=()):
     monkeypatch.setattr(runner.alpaca, "current_spread_price", spread_price)
     monkeypatch.setattr(runner.alpaca, "close_spread", lambda s, lng, n, lim: orders.append((s, lng, n, lim)))
     monkeypatch.setattr(runner.alpaca, "spread_snapshot", lambda s, lng: None)   # no greeks unless a test says so
+    monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: [])            # no intraday vol unless a test says so
     monkeypatch.setattr(runner, "_record_tick", lambda *a, **k: None)          # instrumentation off here
     return closes, peaks, orders
 
@@ -430,3 +432,31 @@ def test_build_deps_resolves_rules_and_selection_by_group(monkeypatch):
     assert d_spy.rules.max_per_group == 2 and d_aapl.rules.max_per_group == 1
     assert d_spy.select.short_delta == 0.30 and d_aapl.select.short_delta == 0.25
     assert d_spy.spot is runner.alpaca.get_spot
+
+
+# ── phase 3: intraday perception feeds the trail and the signals ─────────────
+def test_exits_pass_scales_the_trail_with_todays_vol(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0, expiry="2099-01-01")], price=0.76)  # peak 34 -> now 24
+    positions = [_occ_pos(credit=1.0)]
+    positions[0]["peak_captured"] = 0.34
+    monkeypatch.setattr(runner.store, "get_positions", lambda n=200: positions)
+    chop = [{"open": 100, "high": 100.7, "low": 99.3, "close": 100 + (0.6 if i % 2 else -0.6), "volume": 1} for i in range(40)]
+    monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: chop)         # volatile day -> 14-pt give-back
+    runner.manage_positions()
+    assert orders == []                                                             # a 10-pt pull-back holds
+    monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: [])           # unknown vol -> fixed 7
+    runner.manage_positions()
+    assert len(orders) == 1 and "trailing" in closes[0][2]
+
+
+def test_signals_merge_daily_and_intraday_and_survive_an_intraday_failure(monkeypatch):
+    monkeypatch.setattr(runner.alpaca, "get_spot", lambda u: 101.0)
+    monkeypatch.setattr(runner.alpaca, "recent_bars", lambda u: [100.0 + i * 0.1 for i in range(30)])
+    bars = [{"open": 100, "high": 100.2, "low": 99.8, "close": 100 + i * 0.02, "volume": 10} for i in range(60)]
+    monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: bars)
+    sig = runner._signals("SPY", Params(), "index")
+    assert "tendencia_5d" in sig and "tendencia_30m" in sig and "vwap" in sig
+    monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: (_ for _ in ()).throw(RuntimeError("feed down")))
+    sig2 = runner._signals("SPY", Params(), "index")
+    assert "tendencia_5d" in sig2 and "vwap" not in sig2

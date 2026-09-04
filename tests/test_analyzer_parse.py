@@ -50,3 +50,8 @@ def test_missing_rationale_has_placeholder():
 
 def test_json_array_abstains():
     assert _parse_proposal('[1,2,3]').direction is Direction.ABSTAIN
+
+
+def test_neutral_is_a_valid_direction():
+    p = _parse_proposal('{"direction": "neutral", "confidence": 0.7, "rationale": "lateral y tranquilo"}')
+    assert p.direction is Direction.NEUTRAL and p.confidence == 0.7

@@ -41,6 +41,7 @@ class ExitParams:
     take_profit_step_hours: float = 24.0
     trail_activation: float = 0.30
     trail_giveback: float = 0.07
+    trail_vol_ref_pct: float = 0.8         # give-back scales with intraday vol / this (0 = fixed)
     overnight_mode: str = "flat"           # flat | delta
     flatten_minutes_before_close: float = 30.0
     overnight_max_short_delta: float = 0.35
@@ -54,7 +55,7 @@ class ExitParams:
             take_profit_far=g("take_profit_far"), take_profit_near=g("take_profit_near"),
             take_profit_step_hours=g("take_profit_step_hours"),
             trail_activation=g("trail_activation"), trail_giveback=g("trail_giveback"),
-            overnight_mode=g("overnight_mode"),
+            trail_vol_ref_pct=g("trail_vol_ref_pct"), overnight_mode=g("overnight_mode"),
             flatten_minutes_before_close=g("flatten_minutes_before_close"),
             overnight_max_short_delta=g("overnight_max_short_delta"),
             overnight_net_delta_pct=g("overnight_net_delta_pct"),
@@ -74,6 +75,17 @@ def take_profit_threshold(p: ExitParams, hours_to_expiry: float | None) -> float
     return p.take_profit_far
 
 
+def trail_giveback_for(p: ExitParams, vol_intradia_pct: float | None) -> float:
+    """The trailing give-back in sigma terms: 7 points at the reference vol,
+    twice that when the underlying moves twice as much (a calm-day trail whipsaws
+    on a volatile day), half when it is asleep. Clamped 0.5x-2x. Fixed when the
+    reference is 0 or the vol is unknown."""
+    if not p.trail_vol_ref_pct or vol_intradia_pct is None or vol_intradia_pct <= 0:
+        return p.trail_giveback
+    scale = max(0.5, min(2.0, vol_intradia_pct / p.trail_vol_ref_pct))
+    return round(p.trail_giveback * scale, 4)
+
+
 def decide_exit(
     credit: float,
     current_price: float,
@@ -86,6 +98,7 @@ def decide_exit(
     hours_to_close: float | None = None,
     sleeps_tonight: bool | None = None,
     book_net_delta_pct: float | None = None,
+    vol_intradia_pct: float | None = None,
 ) -> ExitDecision:
     """
     credit             : premium received per share when opened (> 0)
@@ -123,9 +136,12 @@ def decide_exit(
     if captured >= tp:
         return ExitDecision(True, "take-profit ({:.0%} of credit, threshold {:.0%})".format(captured, tp))
 
-    # 5 — Trailing take-profit: once armed, close on a pull-back from the peak.
-    if peak_captured >= p.trail_activation and captured <= peak_captured - p.trail_giveback:
-        return ExitDecision(True, "trailing take-profit (peak {:.0%}, now {:.0%})".format(peak_captured, captured))
+    # 5 — Trailing take-profit: once armed, close on a pull-back from the peak,
+    # the give-back scaled to how much the underlying is actually moving today.
+    giveback = trail_giveback_for(p, vol_intradia_pct)
+    if peak_captured >= p.trail_activation and captured <= peak_captured - giveback:
+        return ExitDecision(True, "trailing take-profit (peak {:.0%}, now {:.0%}, give-back {:.0%})".format(
+            peak_captured, captured, giveback))
 
     # 6 — Overnight rule: never sleep with what the post-mortem showed loses.
     if sleeps_tonight and hours_to_close is not None and hours_to_close * 60.0 <= p.flatten_minutes_before_close:
