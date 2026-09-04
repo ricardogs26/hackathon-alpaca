@@ -464,7 +464,7 @@ def test_signals_merge_daily_and_intraday_and_survive_an_intraday_failure(monkey
 
 def test_signals_thresholds_come_from_the_table_per_group(monkeypatch):
     monkeypatch.setattr(runner.alpaca, "get_spot", lambda u: 100.0)
-    monkeypatch.setattr(runner.alpaca, "recent_bars", lambda u: [100 + (2.0 if i % 2 else -2.0) for i in range(30)])  # ~2% daily vol
+    monkeypatch.setattr(runner.alpaca, "recent_bars", lambda u: [100 + (1.0 if i % 2 else -1.0) for i in range(30)])  # ~2% daily vol
     monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: [])
     prm = Params({"group:megacap": {"vol_high_pct": 3.5}})
     assert runner._signals("SPY", prm, "index")["regimen"] == "volatil"       # global 1.2
