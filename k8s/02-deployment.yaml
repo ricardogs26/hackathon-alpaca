@@ -158,7 +158,14 @@ spec:
               value: "0.03"
             - name: AGENT_RICH_CONTEXT
               value: "true"
-            # Bearer token for PATCH /api/rules. Optional: without it edits over the API are disabled.
+            # Nightly statistical memory (0.8.0): proposals to WhatsApp, applied only on approval.
+            - name: LEARNING_CRON_UTC
+              value: "30 22 * * 1-5"
+            - name: WHATSAPP_SEND_URL
+              value: "http://whatsapp-bridge-service.amael-ia:3000"
+            - name: WHATSAPP_TO
+              value: "5219993437008"
+            # Bearer token for PATCH /api/rules and proposal decisions. Optional: without it edits over the API are disabled.
             - name: RULES_TOKEN
               valueFrom: { secretKeyRef: { name: optionwright-secrets, key: RULES_TOKEN, optional: true } }
           readinessProbe:

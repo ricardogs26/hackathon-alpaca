@@ -5,6 +5,28 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.8.0 — 2026-09-04 · phase 4: statistical memory
+
+- **Nightly memory** (`agent/learning.py`, cron `LEARNING_CRON_UTC`, default
+  17:30 CST on weekdays; `python -m optionwright.learning --dry-run` on
+  demand). For every closed position with ticks it measures what a seller
+  remembers — max favourable and adverse excursion, the highest short delta
+  reached, how it ended, how long it lived — and aggregates by **group ×
+  regime at open × DTE** (the regime is now recorded on the position).
+- **Proposals, not changes.** Two rules of thumb, each only with 20+ trades
+  in the bucket: lower `take_profit_far` when half of the losers had already
+  captured ≥ 30 % before turning while winners' peaks sit near the target;
+  tighten `stop_delta` when delta stops fire late (losses ≈ the credit).
+  Every proposal is bounded (±25 %, inside the registry) and stored in
+  `rule_proposals` with its evidence; one open proposal per parameter and
+  scope; unanswered ones expire in 3 days.
+- **Human gate.** The summary goes to WhatsApp through the Amael bridge
+  (`WHATSAPP_SEND_URL`, `WHATSAPP_TO`; off when empty). A proposal is applied
+  only by `POST /api/rules/proposals/{id}/approve` (or `/reject`) with the
+  rules token; approval writes the change through the rules table, so
+  `rules_history` says "proposal #N approved" and by whom.
+- 14 new tests (204 total).
+
 ## 0.7.0 — 2026-09-04 · phase 3: perception
 
 - **Intraday perception** (`perception.compute_intraday`): from today's

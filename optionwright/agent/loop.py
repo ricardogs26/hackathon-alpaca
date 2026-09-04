@@ -51,6 +51,7 @@ class Deps:
     memory: Callable[[str], dict] = None             # (underlying) -> resultados recientes
     book: Callable[[], dict] = None                  # -> resumen de portafolio
     rich_context: bool = False
+    note_regime: Callable[[int, str | None], None] = None   # (position_id, regime) -> None; phase 4 buckets
 
 
 def _candidate_summary(spread: VerticalSpread | None) -> dict | None:
@@ -79,8 +80,17 @@ def _width(deps: Deps, underlying: str, contracts: list, sel: SelectParams) -> f
     return width_for(spot, sel.width_pct, strike_step(contracts))
 
 
+def _note_regime(deps: Deps, pos_id, regime: str | None) -> None:
+    if deps.note_regime is None or pos_id is None:
+        return
+    try:
+        deps.note_regime(pos_id, regime)
+    except Exception as exc:  # bookkeeping never breaks a cycle
+        logger.warning("regime not recorded for position %s: %s", pos_id, exc)
+
+
 def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, proposal: Proposal,
-                 bull_put: VerticalSpread | None, bear_call: VerticalSpread | None) -> dict:
+                 bull_put: VerticalSpread | None, bear_call: VerticalSpread | None, regime: str | None = None) -> dict:
     """
     Iron condor = the bull put AND the bear call, each gated and recorded as its
     own position (the exits manage each wing: the winning wing closes on its
@@ -107,6 +117,7 @@ def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, pro
         order = deps.submit_spread(wing, n)
         order_id = order.get("id") if isinstance(order, dict) else None
         pos_id = deps.record_position(wing, n, order_id)
+        _note_regime(deps, pos_id, regime)
         deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
                              True, n, f"condor {wing.direction.value} wing: {v.reason}", wing, pos_id)
         ids.append(pos_id)
@@ -173,7 +184,7 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
         return {"underlying": underlying, "action": "vetoed", "reason": reason}
 
     if proposal.direction is Direction.NEUTRAL:
-        return _open_condor(underlying, deps, rules, equity, proposal, bull_put, bear_call)
+        return _open_condor(underlying, deps, rules, equity, proposal, bull_put, bear_call, regime)
 
     chosen = bull_put if proposal.direction is Direction.BULLISH else bear_call if proposal.direction is Direction.BEARISH else None
     if proposal.direction is Direction.ABSTAIN or chosen is None:
@@ -193,6 +204,7 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
     order = deps.submit_spread(chosen, verdict.contracts)
     order_id = order.get("id") if isinstance(order, dict) else None
     pos_id = deps.record_position(chosen, verdict.contracts, order_id)
+    _note_regime(deps, pos_id, regime)
     deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
                          True, verdict.contracts, verdict.reason, chosen, pos_id)
     logger.info("cycle %s -> %s x%d (%s)", underlying, proposal.direction.value, verdict.contracts, order_id)

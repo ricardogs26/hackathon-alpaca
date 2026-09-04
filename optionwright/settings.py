@@ -98,8 +98,12 @@ class Settings(BaseSettings):
     max_direction_share: float = Field(default=0.60, alias="MAX_DIRECTION_SHARE")
     max_net_delta_pct: float = Field(default=0.03, alias="MAX_NET_DELTA_PCT")
     min_reward_risk: float = Field(default=0.20, alias="MIN_REWARD_RISK")
-    # Bearer token required by PATCH /api/rules. Empty = rule edits over the API are disabled.
+    # Bearer token required by PATCH /api/rules and the proposal decisions. Empty = disabled.
     rules_token: str = Field(default="", alias="RULES_TOKEN")
+    # ── Phase 4: nightly statistical memory ──────────────────────────────────
+    learning_cron_utc: str = Field(default="30 22 * * 1-5", alias="LEARNING_CRON_UTC")   # 17:30 CST, weekdays; "" = off
+    whatsapp_send_url: str = Field(default="", alias="WHATSAPP_SEND_URL")   # Amael bridge, e.g. http://whatsapp-bridge-service.amael-ia:3000
+    whatsapp_to: str = Field(default="", alias="WHATSAPP_TO")               # destination number; empty = notifications off
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     # Contexto agéntico: percepción + memoria + portafolio inyectados al LLM

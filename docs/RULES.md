@@ -97,3 +97,22 @@ python -m optionwright.replay --stop-delta 0.40 --overnight-mode delta
 Runs the exit rules over the recorded ticks (`position_ticks`, one row per open
 position per minute since 0.4.0) and prints, per position, where these
 parameters would have closed it against where the agent actually did.
+
+## Learning — the nightly memory (`agent/learning.py`)
+
+Runs at `LEARNING_CRON_UTC` (17:30 CST on weekdays). For each closed position
+with ticks it measures the maximum favourable and adverse excursion, the
+highest short delta reached, the outcome and the holding time, and aggregates
+by **correlation group × regime at open × DTE bucket**. With 20 or more trades
+in a bucket it may PROPOSE:
+
+| Proposal | When | Bound |
+|----------|------|-------|
+| lower `take_profit_far` | half of the losers had captured ≥ 30 % before turning and winners' median peak ≤ target + 5 pts | ±25 % of the current value, inside the registry |
+| tighten `stop_delta` (−0.05) | ≥ 3 delta stops in the bucket and losses average ≥ 80 % of the credit | same |
+
+Proposals land in `rule_proposals` with their evidence and reach WhatsApp.
+**Nothing is applied without a person**: `POST /api/rules/proposals/{id}/approve`
+(or `/reject`) with the rules token; an approval goes through `set_rule`, so
+the history row says "proposal #N approved" and by whom. Unanswered proposals
+expire after 3 days.

@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-190%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-204%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
 [Live dashboard](https://optionwright.richardx.dev) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
@@ -133,6 +133,15 @@ credit.
 `python -m optionwright.replay` runs these rules over the recorded ticks and
 shows where a candidate set of parameters would have closed each real position.
 
+## Learning
+
+A nightly job measures every closed position from its ticks (favourable and
+adverse excursions, the highest short delta, the outcome) and aggregates by
+correlation group, regime and days to expiry. With a real sample it proposes a
+bounded parameter change with its evidence; the proposal goes to WhatsApp and
+is applied only when a person approves it through the API with the rules
+token. Details in [`docs/RULES.md`](docs/RULES.md#learning--the-nightly-memory-agentlearningpy).
+
 ## The model
 
 - The analyzer's only output is `{direction, confidence, rationale}`, with
@@ -191,7 +200,8 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `UNDERLYING_GROUPS` | Correlation groups, `name:SYM,SYM;name:SYM` (default index + megacap); `UNDERLYINGS` is the flat fallback |
 | `CYCLE_SECONDS` | How often the agent evaluates the market |
 | Rule parameters (`MAX_LOSS_PCT`, `STOP_DELTA`, `OVERNIGHT_MODE`, …) | **Seeds** for the `rules` table on first start; afterwards edit via `PATCH /api/rules`. Full list: [`docs/RULES.md`](docs/RULES.md) |
-| `RULES_TOKEN` | Bearer token for `PATCH /api/rules`; empty disables edits |
+| `RULES_TOKEN` | Bearer token for `PATCH /api/rules` and proposal decisions; empty disables edits |
+| `LEARNING_CRON_UTC` / `WHATSAPP_SEND_URL` / `WHATSAPP_TO` | Nightly memory schedule and where its summary is sent (WhatsApp off when empty) |
 | `AGENT_RICH_CONTEXT` | Feed the model market signals, recent outcomes and the open book |
 | `EXPIRY_MIN_DAYS` / `EXPIRY_MAX_DAYS` | Target expiration window, in trading sessions from today |
 
@@ -206,7 +216,7 @@ optionwright/
   storage/    Postgres schema + reads (orders, equity, decisions)
   api/        FastAPI: read-only endpoints, the rules API + the live dashboard
   replay.py   the exit rules over recorded ticks, simulated vs actual
-tests/        190 tests over the deterministic core
+tests/        204 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -230,7 +240,7 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 190 tests, no network or account needed
+pytest -q          # 204 tests, no network or account needed
 ```
 
 The deterministic core (spread selection, the risk gates, exit decisions, market

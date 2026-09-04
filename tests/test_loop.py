@@ -246,3 +246,25 @@ def test_volatile_regime_directional_mode_trades_normally():
     deps.select = SelectParams(volatile_mode="directional")
     deps.rules = RuleSet(min_reward_risk=0.1)     # the 0.20-delta wing of the fixture pays 0.16
     assert run_cycle("SPY", deps)["action"] == "opened"
+
+
+# ── phase 4: the regime at open is recorded ──────────────────────────────────
+def test_regime_recorded_for_directional_and_both_condor_wings():
+    rec = _Recorder()
+    noted = []
+    deps = _rich(rec.deps(Proposal(Direction.BULLISH, 0.9, "up")))
+    deps.note_regime = lambda pid, regime: noted.append((pid, regime))
+    run_cycle("SPY", deps)
+    assert noted == [(77, "tranquilo")]
+    rec2 = _Recorder()
+    deps2 = _rich(rec2.deps(Proposal(Direction.NEUTRAL, 0.9, "rango")))
+    deps2.note_regime = lambda pid, regime: noted.append((pid, regime))
+    run_cycle("SPY", deps2)
+    assert len(noted) == 3
+
+
+def test_regime_bookkeeping_failure_never_breaks_the_cycle():
+    rec = _Recorder()
+    deps = _rich(rec.deps(Proposal(Direction.BULLISH, 0.9, "up")))
+    deps.note_regime = lambda pid, regime: (_ for _ in ()).throw(RuntimeError("db"))
+    assert run_cycle("SPY", deps)["action"] == "opened"

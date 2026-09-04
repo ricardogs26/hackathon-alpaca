@@ -469,3 +469,16 @@ def test_signals_thresholds_come_from_the_table_per_group(monkeypatch):
     prm = Params({"group:megacap": {"vol_high_pct": 3.5}})
     assert runner._signals("SPY", prm, "index")["regimen"] == "volatil"       # global 1.2
     assert runner._signals("NVDA", prm, "megacap")["regimen"] == "tranquilo"  # megacap 3.5
+
+
+# ── phase 4: scheduler wiring of the nightly job ─────────────────────────────
+def test_build_scheduler_adds_the_nightly_learning_job_when_configured():
+    from types import SimpleNamespace
+
+    from optionwright.api.main import build_scheduler
+
+    s = SimpleNamespace(cycle_seconds=180, exit_check_seconds=60, learning_cron_utc="30 22 * * 1-5")
+    sched = build_scheduler(s, lambda: None, lambda: None, lambda: None)
+    assert {j.id for j in sched.get_jobs()} == {"entries", "exits", "learning"}
+    s2 = SimpleNamespace(cycle_seconds=180, exit_check_seconds=60, learning_cron_utc="")
+    assert {j.id for j in build_scheduler(s2, lambda: None, lambda: None, lambda: None).get_jobs()} == {"entries", "exits"}

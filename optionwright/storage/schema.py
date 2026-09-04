@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS positions (
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_positions_underlying ON positions(underlying);
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS peak_captured DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS regime TEXT;   -- regime at open (phase 4 buckets)
 
 -- Phase 0 instrumentation: one row per open position per exits tick (~60s).
 -- The state a premium seller reads (delta, sigma distance, time left, sleeps)
@@ -83,6 +84,21 @@ CREATE TABLE IF NOT EXISTS rules_history (
     new_value   TEXT NOT NULL,
     changed_by  TEXT NOT NULL,
     reason      TEXT NOT NULL
+);
+
+-- Phase 4: what the nightly memory proposes; applied only by a human decision.
+CREATE TABLE IF NOT EXISTS rule_proposals (
+    id          BIGSERIAL PRIMARY KEY,
+    ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    scope       TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    current     TEXT NOT NULL,
+    proposed    TEXT NOT NULL,
+    sample_n    INTEGER NOT NULL,
+    evidence    TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | rejected | expired
+    decided_by  TEXT,
+    decided_at  TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS equity_curve (

@@ -21,7 +21,7 @@ logging.basicConfig(level=get_settings().log_level)
 _scheduler = None
 
 
-def build_scheduler(s, run_exits, run_entries):
+def build_scheduler(s, run_exits, run_entries, run_learning=None):
     """Two jobs on two clocks: exits every EXIT_CHECK_SECONDS (cheap: one quote
     per open position) and entries every CYCLE_SECONDS (chains + LLM + gates).
     max_instances=1 per job so a slow pass never overlaps itself; the exits
@@ -34,11 +34,18 @@ def build_scheduler(s, run_exits, run_entries):
                   max_instances=1, coalesce=True)
     sched.add_job(run_exits, "interval", seconds=s.exit_check_seconds, id="exits",
                   max_instances=1, coalesce=True)
+    cron = getattr(s, "learning_cron_utc", "") or ""
+    if run_learning is not None and cron.strip():
+        from apscheduler.triggers.cron import CronTrigger
+
+        sched.add_job(run_learning, CronTrigger.from_crontab(cron, timezone="UTC"), id="learning",
+                      max_instances=1, coalesce=True)
     return sched
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from optionwright.agent.learning import run_nightly
     from optionwright.agent.runner import run_entries, run_exits
     from optionwright.storage import store
 
@@ -57,7 +64,7 @@ async def lifespan(app: FastAPI):
         logger.warning("startup DB step deferred: %s", exc)
 
     global _scheduler
-    _scheduler = build_scheduler(s, run_exits, run_entries)
+    _scheduler = build_scheduler(s, run_exits, run_entries, lambda: run_nightly())
     _scheduler.start()
     logger.info("scheduler started: entries every %ds, exits every %ds, over %s",
                 s.cycle_seconds, s.exit_check_seconds, s.underlyings_list)
@@ -203,6 +210,43 @@ def patch_rule(body: dict, authorization: str | None = Header(default=None)) -> 
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     _cache.pop("rules_raw", None)
+    return out
+
+
+def _require_token(authorization: str | None) -> None:
+    token = get_settings().rules_token
+    if not token:
+        raise HTTPException(status_code=403, detail="rule edits are disabled (RULES_TOKEN not set)")
+    if authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="bad token")
+
+
+@app.get("/api/rules/proposals")
+def rule_proposals(limit: int = 50) -> list[dict]:
+    """What the nightly memory proposed, newest first, with status."""
+    from optionwright.storage import store
+
+    return _cached(f"proposals:{limit}", lambda: store.list_proposals(limit))
+
+
+@app.post("/api/rules/proposals/{proposal_id}/{decision}")
+def decide_rule_proposal(proposal_id: int, decision: str, body: dict | None = None,
+                         authorization: str | None = Header(default=None)) -> dict:
+    """approve = apply the proposed value through the rules table (history says
+    'proposal #N approved'); reject = mark it. Token required."""
+    from optionwright.storage import store
+
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=404, detail="use approve or reject")
+    _require_token(authorization)
+    try:
+        out = store.decide_proposal(proposal_id, decision == "approve", str((body or {}).get("decided_by") or "api"))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    _cache.pop("rules_raw", None)
+    _cache.pop("proposals:50", None)
     return out
 
 

@@ -54,7 +54,11 @@ Kept below for the record.
 | 3.3 | Iron condor when the signal is sideways | A | sideways days idle |
 | 3.4 | Trailing give-back in sigmas, not points | M | 7 points for everything |
 
-## Phase 4 · statistical memory (3-4 days)
+## Phase 4 · statistical memory — **done in 0.8.0 (2026-09-04)**
+4.1 nightly job with two bounded proposal rules (take-profit, delta stop) on
+group × regime × DTE buckets, min sample 20; 4.2 human gate via API token, the
+summary over WhatsApp. Reply-by-WhatsApp (`/ow approve N`) needs a route in
+the Amael bridge — follow-up there. Kept below for the record.
 | # | Activity | Crit | Addresses |
 |---|---|---|---|
 | 4.1 | Nightly job: excursions per group × regime × DTE; threshold proposals with min sample and hard bounds | A | the seller's "experience" |

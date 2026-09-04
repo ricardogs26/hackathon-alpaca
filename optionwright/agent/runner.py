@@ -331,6 +331,7 @@ def _build_deps(params: Params, underlying: str) -> Deps:
         signals=lambda u, e: _signals(u, params, group),
         memory=lambda u: store.recent_outcomes(u),
         book=lambda: store.llm_book_view(store.book_summary(rules.breaker_lookback_hours)),
+        note_regime=store.note_regime,
         rich_context=s.agent_rich_context,
     )
 

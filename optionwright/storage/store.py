@@ -77,6 +77,70 @@ def record_position(spread: VerticalSpread, contracts: int, order_id: str | None
         return row[0]
 
 
+def note_regime(position_id: int, regime: str | None) -> None:
+    """The regime read at open, for the nightly buckets (phase 4)."""
+    if not regime:
+        return
+    with _conn() as c:
+        c.execute("UPDATE positions SET regime=%s WHERE id=%s", (str(regime), position_id))
+
+
+def closed_positions(days: int = 45) -> list[dict]:
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT id, underlying, expiry, credit, contracts, ts_open, ts_close, realized_pnl, exit_reason, regime"
+            " FROM positions WHERE status='closed' AND ts_close >= now() - make_interval(days => %s) ORDER BY id", (days,))
+        rows = _rows(cur)
+    for r in rows:
+        r["expiry"] = str(r["expiry"])
+    return rows
+
+
+# ── rule proposals (phase 4) ──────────────────────────────────────────────────
+def add_proposal(p) -> int:
+    with _conn() as c:
+        row = c.execute(
+            "INSERT INTO rule_proposals (scope, key, current, proposed, sample_n, evidence) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+            (p.scope, p.key, str(p.current), str(p.proposed), int(p.sample_n), p.evidence)).fetchone()
+        return int(row[0])
+
+
+def pending_proposals() -> list[dict]:
+    with _conn() as c:
+        rows = _rows(c.execute("SELECT * FROM rule_proposals WHERE status='pending' ORDER BY id"))
+    return [{**r, "ts": r["ts"].isoformat(), "decided_at": None} for r in rows]
+
+
+def list_proposals(limit: int = 50) -> list[dict]:
+    with _conn() as c:
+        rows = _rows(c.execute("SELECT * FROM rule_proposals ORDER BY id DESC LIMIT %s", (limit,)))
+    return [{**r, "ts": r["ts"].isoformat(), "decided_at": r["decided_at"].isoformat() if r.get("decided_at") else None} for r in rows]
+
+
+def expire_proposals(days: int) -> int:
+    with _conn() as c:
+        cur = c.execute("UPDATE rule_proposals SET status='expired' WHERE status='pending' AND ts < now() - make_interval(days => %s)", (days,))
+        return cur.rowcount
+
+
+def decide_proposal(proposal_id: int, approve: bool, decided_by: str) -> dict:
+    """Approve = apply through set_rule (history row says who and why); reject = mark."""
+    with _conn() as c:
+        row = c.execute("SELECT * FROM rule_proposals WHERE id=%s", (proposal_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"proposal {proposal_id} not found")
+        cols = [d[0] for d in c.description]
+        p = dict(zip(cols, row))
+        if p["status"] != "pending":
+            raise ValueError(f"proposal {proposal_id} is {p['status']}")
+        c.execute("UPDATE rule_proposals SET status=%s, decided_by=%s, decided_at=now() WHERE id=%s",
+                  ("approved" if approve else "rejected", decided_by, proposal_id))
+    if approve:
+        set_rule(p["scope"], p["key"], p["proposed"], decided_by, f"proposal #{proposal_id} approved: {p['evidence']}")
+    return {"id": proposal_id, "status": "approved" if approve else "rejected", "scope": p["scope"], "key": p["key"],
+            "value": p["proposed"] if approve else p["current"]}
+
+
 def close_position(position_id: int, realized_pnl: float, exit_reason: str) -> None:
     from optionwright import metrics
 
