@@ -5,6 +5,11 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.5.1 — 2026-09-04
+
+- Dashboard: the "Rules" panel is removed — a wall of parameters on the
+  trading page had no reader. The values stay available at `GET /api/rules`.
+
 ## 0.5.0 — 2026-09-04 · phase 1: risk math and the state-based rules engine
 
 The judged week (31-Aug → 3-Sep) ended at −6.9 %: 17 wins averaging $174

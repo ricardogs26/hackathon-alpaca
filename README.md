@@ -208,8 +208,7 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
   overnight, captured fraction and P&L, next to the decision taken. The
   dataset the next generation of exit rules is designed on.
 - **Dashboard** at `/`: equity curve, open positions with their live state
-  (delta, σ distance, time left, what the rules say), the effective rules, open
-  and closed spreads, and the decision log (the reason and gate verdict behind
+  (delta, σ distance, time left, what the rules say), open and closed spreads, and the decision log (the reason and gate verdict behind
   every cycle).
 - **Grafana** dashboard under [`k8s/grafana`](k8s/grafana).
 

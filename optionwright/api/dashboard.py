@@ -146,10 +146,6 @@ DASHBOARD_HTML = r"""<!doctype html>
       <div id="pstate"><div class="muted">No open positions.</div></div>
     </div>
     <div class="card wide">
-      <h2>Rules<span class="subt">effective parameters · global scope unless marked</span></h2>
-      <div id="rules"><div class="muted">Loading…</div></div>
-    </div>
-    <div class="card wide">
       <h2>Positions</h2>
       <div id="positions"><div class="muted">No positions yet.</div></div>
     </div>
@@ -317,7 +313,6 @@ async function refresh(){
   _decisions = await j('/api/decisions?limit=100') || [];
   renderDecisions();
   renderState(await j('/api/positions/state') || []);
-  renderRules(await j('/api/rules'));
 }
 
 function renderState(rows){
@@ -336,16 +331,7 @@ function renderState(rows){
       `<td>${r.decision||'—'}${r.reason?' · '+r.reason:''}</td></tr>`).join('')+'</table></div>';
 }
 
-function renderRules(rl){
-  if(!rl){ $('rules').innerHTML = '<div class="muted">Rules unavailable.</div>'; return; }
-  const keys = Object.keys(rl.registry);
-  const col = sec => keys.filter(k=>rl.registry[k].section===sec).map(k=>{
-    const src = rl.source[k]; const mark = (src==='default'||src==='global') ? '' : ` <span class="tag t-open">${src}</span>`;
-    return `<div class="sessrow" title="${rl.registry[k].description}"><span class="k">${k}${mark}</span><span class="n" style="font-family:var(--mono)">${rl.effective[k]}</span></div>`;
-  }).join('');
-  $('rules').innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 24px">`+
-    `<div><div class="sub" style="margin-bottom:6px">entries · gates</div>${col('risk')}</div>`+
-    `<div><div class="sub" style="margin-bottom:6px">exits</div>${col('exits')}</div></div>`;
+</div></div>`;
 }
 
 let _decisions = [];
