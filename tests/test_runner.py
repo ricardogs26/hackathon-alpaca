@@ -149,14 +149,31 @@ def _wire_store(monkeypatch, positions, price, raise_for=()):
     monkeypatch.setattr(runner.store, "close_position", lambda pid, pnl, why: closes.append((pid, pnl, why)))
 
     def spread_price(short, long):
-        pid = int(short[1:])
+        pid = int(short[1:]) if short[1:].isdigit() else None   # "S1" fakes; OCC symbols carry no id
         if pid in raise_for:
             raise RuntimeError("quote unavailable")
         return price[pid] if isinstance(price, dict) else price
 
     monkeypatch.setattr(runner.alpaca, "current_spread_price", spread_price)
     monkeypatch.setattr(runner.alpaca, "close_spread", lambda s, lng, n, lim: orders.append((s, lng, n, lim)))
+    monkeypatch.setattr(runner, "_record_tick", lambda *a, **k: None)   # instrumentation off here
     return closes, peaks, orders
+
+
+def _wire_ticks(monkeypatch, snapshot=None, snapshot_raises=False):
+    """Re-enable the real _record_tick with fake broker reads; returns the recorded ticks."""
+    ticks = []
+    monkeypatch.setattr(runner, "_record_tick", runner.__dict__["_record_tick_impl"])
+    monkeypatch.setattr(runner.alpaca, "get_spot", lambda u: 768.34)
+
+    def snap(short, long):
+        if snapshot_raises:
+            raise RuntimeError("snapshot unavailable")
+        return snapshot
+
+    monkeypatch.setattr(runner.alpaca, "spread_snapshot", snap)
+    monkeypatch.setattr(runner.store, "record_tick", lambda t: ticks.append(t))
+    return ticks
 
 
 def test_manage_closes_on_take_profit(monkeypatch):
@@ -246,3 +263,60 @@ def test_build_scheduler_registers_exits_and_entries_jobs():
     assert jobs["exits"].trigger.interval.total_seconds() == 60
     assert jobs["exits"].max_instances == 1 and jobs["entries"].max_instances == 1
     assert not sched.running   # built, not started (no threads in tests)
+
+
+# ── phase 0: position ticks ───────────────────────────────────────────────────
+def _occ_pos(pid=22, credit=1.07, contracts=8, expiry="2099-01-01"):
+    p = _pos(pid, credit=credit, contracts=contracts, expiry=expiry)
+    p["short_symbol"], p["long_symbol"] = "SPY990101C00769000", "SPY990101C00774000"
+    return p
+
+
+def test_tick_recorded_with_state_on_hold(monkeypatch):
+    _use_clock(monkeypatch, True)
+    _wire_store(monkeypatch, [_occ_pos()], price=1.10)          # captured -3%: hold
+    ticks = _wire_ticks(monkeypatch, snapshot={"short_delta": 0.41, "short_iv": 0.19})
+    runner.manage_positions()
+    assert len(ticks) == 1
+    t = ticks[0]
+    assert t.position_id == 22 and t.decision == "hold" and t.spot == 768.34
+    assert t.short_delta == 0.41 and t.short_iv == 0.19 and t.short_strike == 769.0
+    assert t.sigma_dist is not None and t.hours_to_expiry > 0
+
+
+def test_tick_recorded_after_close_and_marks_decision(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos()], price=0.50)   # take-profit
+    ticks = _wire_ticks(monkeypatch, snapshot={"short_delta": 0.12, "short_iv": 0.15})
+    runner.manage_positions()
+    assert len(orders) == 1 and len(closes) == 1
+    assert ticks[0].decision == "close" and "take-profit" in ticks[0].reason
+
+
+def test_tick_failure_never_blocks_the_close(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos()], price=0.50)
+    ticks = _wire_ticks(monkeypatch, snapshot_raises=True)
+    before = _val(metrics.ERRORS, where="tick")
+    out = runner.manage_positions()
+    assert len(orders) == 1 and len(closes) == 1 and out[0]["action"] == "closed"
+    assert ticks == []
+    assert _val(metrics.ERRORS, where="tick") == before + 1
+
+
+def test_tick_tolerates_missing_snapshot(monkeypatch):
+    _use_clock(monkeypatch, True)
+    _wire_store(monkeypatch, [_occ_pos()], price=1.10)
+    ticks = _wire_ticks(monkeypatch, snapshot=None)
+    runner.manage_positions()
+    assert ticks[0].short_delta is None and ticks[0].sigma_dist is None
+
+
+def test_spot_read_once_per_underlying_per_pass(monkeypatch):
+    _use_clock(monkeypatch, True)
+    _wire_store(monkeypatch, [_occ_pos(1), _occ_pos(2)], price=1.10)
+    ticks = _wire_ticks(monkeypatch, snapshot=None)
+    reads = []
+    monkeypatch.setattr(runner.alpaca, "get_spot", lambda u: reads.append(u) or 768.0)
+    runner.manage_positions()
+    assert len(ticks) == 2 and reads == ["SPY"]

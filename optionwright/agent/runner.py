@@ -21,6 +21,7 @@ import time
 
 from optionwright.agent import perception
 from optionwright.agent.analyzer import propose
+from optionwright.agent.state import compute_tick
 from optionwright.agent.loop import Deps, run_cycle
 from optionwright.broker import alpaca
 from optionwright.policy.gates import RuleSet
@@ -36,20 +37,26 @@ def _account() -> tuple[float, float]:
 
 
 _CLOCK_TTL = 15.0                       # seconds; two jobs share one clock read
-_clock_cache: tuple[float, bool] | None = None
+_clock_cache: tuple[float, bool, object] | None = None   # (monotonic, is_open, next_close)
 _exit_lock = threading.Lock()           # exits passes never overlap each other
 
 
-def _market_open() -> bool:
-    """Alpaca's clock, cached _CLOCK_TTL so the 60s exits job and the 180s
-    entries job don't each hit the broker for the same answer."""
+def _clock() -> tuple[bool, object]:
+    """Alpaca's clock (is_open, next_close), cached _CLOCK_TTL so the 60s exits
+    job and the 180s entries job don't each hit the broker for the same answer."""
     global _clock_cache
     now = time.monotonic()
     if _clock_cache is not None and now - _clock_cache[0] < _CLOCK_TTL:
-        return _clock_cache[1]
-    is_open = bool(alpaca._trading_client().get_clock().is_open)
-    _clock_cache = (now, is_open)
-    return is_open
+        return _clock_cache[1], _clock_cache[2]
+    clk = alpaca._trading_client().get_clock()
+    is_open = bool(clk.is_open)
+    next_close = getattr(clk, "next_close", None)
+    _clock_cache = (now, is_open, next_close)
+    return is_open, next_close
+
+
+def _market_open() -> bool:
+    return _clock()[0]
 
 
 def _minutes_since_open() -> float | None:
@@ -116,6 +123,7 @@ def _manage_positions() -> list[dict]:
     )
     today = date.today().isoformat()
     results = []
+    spots: dict[str, float] = {}   # one spot read per underlying per pass, for the ticks
 
     all_positions = store.get_positions(200)
     metrics.set_position_gauges(all_positions)
@@ -142,21 +150,51 @@ def _manage_positions() -> list[dict]:
                 pos["id"], pos["underlying"], credit, price, captured_pct,
                 "close" if decision.close else "hold", pnl_now,
             )
-            if not decision.close:
-                continue
-            # Cross the spread by a few cents so the close actually fills (SPY/QQQ
-            # options are penny-wide). We estimate realized P&L from the mid.
-            close_limit = round(price + 0.05, 2)
-            alpaca.close_spread(pos["short_symbol"], pos["long_symbol"], pos["contracts"], close_limit)
-            store.close_position(pos["id"], pnl_now, decision.reason)
-            metrics.record_realized_pnl(pnl_now)
-            logger.info("closed position %s: %s, P&L %.2f", pos["id"], decision.reason, pnl_now)
-            results.append({"position_id": pos["id"], "action": "closed",
-                            "reason": decision.reason, "realized_pnl": pnl_now})
+            if decision.close:
+                # Cross the spread by a few cents so the close actually fills (SPY/QQQ
+                # options are penny-wide). We estimate realized P&L from the mid.
+                close_limit = round(price + 0.05, 2)
+                alpaca.close_spread(pos["short_symbol"], pos["long_symbol"], pos["contracts"], close_limit)
+                store.close_position(pos["id"], pnl_now, decision.reason)
+                metrics.record_realized_pnl(pnl_now)
+                logger.info("closed position %s: %s, P&L %.2f", pos["id"], decision.reason, pnl_now)
+                results.append({"position_id": pos["id"], "action": "closed",
+                                "reason": decision.reason, "realized_pnl": pnl_now})
+            # Instrumentation AFTER the money decision: a tick that fails never
+            # delays or blocks a close.
+            _record_tick(pos, price, peak, decision, spots)
         except Exception as exc:
             logger.error("manage position %s failed: %s", pos.get("id"), exc, exc_info=True)
             metrics.ERRORS.labels(where="manage").inc()
     return results
+
+
+def _record_tick(pos: dict, price: float, peak: float, decision, spots: dict[str, float]) -> None:
+    """Phase 0: persist the position's state vector for this tick. Best effort —
+    any failure is counted and logged, never raised into the exits pass."""
+    from datetime import datetime, timezone
+
+    from optionwright import metrics
+
+    try:
+        u = pos["underlying"]
+        if u not in spots:
+            spots[u] = alpaca.get_spot(u)
+        snap = alpaca.spread_snapshot(pos["short_symbol"], pos["long_symbol"]) or {}
+        _, next_close = _clock()
+        tick = compute_tick(
+            pos=pos, price=price, peak_captured=peak,
+            decision="close" if decision.close else "hold", reason=decision.reason,
+            spot=spots.get(u), short_delta=snap.get("short_delta"), short_iv=snap.get("short_iv"),
+            now=datetime.now(timezone.utc), next_close=next_close,
+        )
+        store.record_tick(tick)
+    except Exception as exc:
+        logger.warning("tick for position %s not recorded: %s", pos.get("id"), exc)
+        metrics.ERRORS.labels(where="tick").inc()
+
+
+_record_tick_impl = _record_tick   # tests patch `_record_tick`; this keeps the real one reachable
 
 
 def _build_deps() -> Deps:

@@ -133,17 +133,53 @@ def get_spot(underlying: str) -> float:
     return float(resp[underlying].price)
 
 
+def _session_window(today: date, sessions: list[date], min_days: int, max_days: int) -> tuple[date, date] | None:
+    """
+    [min_days, max_days] counted in TRADING SESSIONS after `today`, not calendar
+    days. `sessions` are the exchange's upcoming session dates (sorted). Returns
+    the (earliest, latest) dates the window covers, or None if the calendar
+    doesn't reach min_days. Pure, so the weekend/holiday arithmetic is tested.
+
+    Why: on Thu 3-Sep-2026 a calendar window of 2-3 days landed on Sat/Sun and
+    the agent logged "no expiry" all morning. Counting sessions, 2 days after a
+    Thursday is Monday — or Tuesday when Monday is a holiday.
+    """
+    future = sorted(d for d in sessions if d > today)
+    if min_days < 1 or max_days < min_days or len(future) < min_days:
+        return None
+    return future[min_days - 1], future[min(max_days, len(future)) - 1]
+
+
+def _upcoming_sessions(today: date, horizon_days: int = 21) -> list[date]:
+    from alpaca.trading.requests import GetCalendarRequest
+
+    cal = _trading_client().get_calendar(GetCalendarRequest(start=today, end=today + timedelta(days=horizon_days)))
+    return [c.date for c in cal]
+
+
 def nearest_expiry(underlying: str, min_days: int = 1, max_days: int = 10) -> str | None:
-    """Nearest listed expiration within [min_days, max_days] from today."""
+    """
+    Nearest listed expiration within [min_days, max_days] trading sessions from
+    today. If the calendar can't be read, degrades to calendar days (the old
+    behaviour) rather than skipping the cycle.
+    """
     from alpaca.trading.enums import AssetStatus
     from alpaca.trading.requests import GetOptionContractsRequest
 
     today = date.today()
+    try:
+        window = _session_window(today, _upcoming_sessions(today), min_days, max_days)
+        if window is None:
+            return None
+        gte, lte = window
+    except Exception as exc:  # calendar hiccup: never let it cost a cycle
+        logger.warning("session calendar unavailable (%s); using calendar days", exc)
+        gte, lte = today + timedelta(days=min_days), today + timedelta(days=max_days)
     req = GetOptionContractsRequest(
         underlying_symbols=[underlying],
         status=AssetStatus.ACTIVE,
-        expiration_date_gte=today + timedelta(days=min_days),
-        expiration_date_lte=today + timedelta(days=max_days),
+        expiration_date_gte=gte,
+        expiration_date_lte=lte,
         limit=1,
     )
     contracts = _trading_client().get_option_contracts(req).option_contracts
@@ -253,6 +289,29 @@ def _build_mleg_args(spread: VerticalSpread, contracts: int, limit_price: float)
         "--time-in-force", "day",
         "--legs", json.dumps(legs),
     ]
+
+
+def spread_snapshot(short_symbol: str, long_symbol: str) -> dict | None:
+    """
+    The short leg's greeks and IV for the position tick (phase 0
+    instrumentation). Separate from `current_spread_price` on purpose: the money
+    path keeps its own quote read; this one can fail without cost. Alpaca
+    returns no greeks on the expiry day itself (verified 4-Sep-2026): the tick
+    then carries None for delta/IV/sigma, which is honest, not an error.
+    """
+    from alpaca.data.requests import OptionSnapshotRequest
+
+    resp = _option_data_client().get_option_snapshot(
+        OptionSnapshotRequest(symbol_or_symbols=[short_symbol, long_symbol], feed="indicative")
+    )
+    snap = resp.get(short_symbol)
+    if snap is None:
+        return None
+    greeks = getattr(snap, "greeks", None)
+    return {
+        "short_delta": getattr(greeks, "delta", None) if greeks else None,
+        "short_iv": getattr(snap, "implied_volatility", None),
+    }
 
 
 def current_spread_price(short_symbol: str, long_symbol: str) -> float | None:

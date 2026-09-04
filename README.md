@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-85%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-121%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
 [Live dashboard](https://optionwright.richardx.dev) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
@@ -67,7 +67,8 @@ Defined-risk credit vertical spreads on the most liquid weekly options.
   bearish. Both are credit spreads with a capped max loss of `width − credit`.
 - Underlyings limited to a short whitelist (SPY, QQQ, IWM). That whitelist is a
   risk gate, not a limitation.
-- Strikes chosen by delta, expiries near-weekly (2 to 3 DTE).
+- Strikes chosen by delta, expiries near-weekly (2 to 3 trading sessions out;
+  weekends and exchange holidays are skipped).
 
 ## Risk gates
 
@@ -162,7 +163,7 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `HARD_TAKE_PROFIT` / `TRAIL_ACTIVATION` / `TRAIL_GIVEBACK` / `STOP_LOSS_MULT` | Exit thresholds (see Exit management) |
 | `MIN_CONFIDENCE` | Minimum model confidence to open a trade |
 | `AGENT_RICH_CONTEXT` | Feed the model market signals, recent outcomes and the open book |
-| `EXPIRY_MIN_DAYS` / `EXPIRY_MAX_DAYS` | Target days-to-expiration window |
+| `EXPIRY_MIN_DAYS` / `EXPIRY_MAX_DAYS` | Target expiration window, in trading sessions from today |
 
 ## Architecture
 
@@ -174,7 +175,7 @@ optionwright/
   broker/     Alpaca chain data + multi-leg execution via CLI
   storage/    Postgres schema + reads (orders, equity, decisions)
   api/        FastAPI: read-only endpoints + the live dashboard
-tests/        85 tests over the deterministic core
+tests/        121 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -184,6 +185,11 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 - **Prometheus** at `/metrics`: cycle outcomes, decisions by direction, LLM
   confidence and latency, open positions, realized P&L, equity, and a live
   per-position evaluation table.
+- **Position ticks** in Postgres (`position_ticks`): every ~60s, per open
+  position, the short leg's delta and IV, the distance to the short strike in
+  expected-move units, time to expiry and to the close, whether it sleeps
+  overnight, captured fraction and P&L, next to the decision taken. The
+  dataset the next generation of exit rules is designed on.
 - **Dashboard** at `/`: equity curve, open and closed spreads, and the decision
   log (the reason and gate verdict behind every cycle).
 - **Grafana** dashboard under [`k8s/grafana`](k8s/grafana).
@@ -192,7 +198,7 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 85 tests, no network or account needed
+pytest -q          # 121 tests, no network or account needed
 ```
 
 The deterministic core (spread selection, the risk gates, exit decisions, market

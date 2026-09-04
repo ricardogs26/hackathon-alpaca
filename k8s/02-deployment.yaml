@@ -75,11 +75,11 @@ spec:
               value: "8"
             - name: MAX_PER_UNDERLYING
               value: "3"
-            # 2026-09-03 (jueves): con min=2 la ventana caía en fin de semana y el
-            # agente registraba "no expiry" todo el día. min=1 → toma el viernes 4.
-            # Regresar a 2 si el agente sigue después del hackathon.
+            # Counted in trading SESSIONS since 0.4.0 (weekends/holidays skipped):
+            # the 3-Sep "no expiry" morning came from a calendar-day window
+            # landing on a weekend. Back to 2 sessions.
             - name: EXPIRY_MIN_DAYS
-              value: "1"
+              value: "2"
             - name: EXPIRY_MAX_DAYS
               value: "3"
             - name: HARD_TAKE_PROFIT

@@ -96,6 +96,33 @@ def update_peak_captured(position_id: int, captured: float) -> None:
         )
 
 
+_TICK_COLS = (
+    "ts", "position_id", "underlying", "spot", "credit", "price", "captured", "peak_captured",
+    "pnl_now", "short_strike", "option_right", "short_delta", "short_iv", "sigma_dist",
+    "hours_to_expiry", "hours_to_close", "sleeps_tonight", "decision", "reason",
+)
+
+
+def record_tick(tick) -> None:
+    """Persist one PositionTick (see agent/state.py). Phase 0 instrumentation."""
+    row = tick.as_row()
+    with _conn() as c:
+        c.execute(
+            f"INSERT INTO position_ticks ({','.join(_TICK_COLS)}) VALUES ({','.join(['%s'] * len(_TICK_COLS))})",
+            tuple(row[k] for k in _TICK_COLS),
+        )
+
+
+def get_ticks(position_id: int, limit: int = 2000) -> list[dict]:
+    """Chronological ticks of one position, for replays and the dashboard."""
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT * FROM position_ticks WHERE position_id=%s ORDER BY ts LIMIT %s", (position_id, limit)
+        )
+        rows = _rows(cur)
+    return [{**r, "ts": r["ts"].isoformat()} for r in rows]
+
+
 def save_equity(equity: float, cash: float | None) -> None:
     from optionwright import metrics
 

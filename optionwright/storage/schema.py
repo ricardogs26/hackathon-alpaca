@@ -37,6 +37,34 @@ CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_positions_underlying ON positions(underlying);
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS peak_captured DOUBLE PRECISION DEFAULT 0;
 
+-- Phase 0 instrumentation: one row per open position per exits tick (~60s).
+-- The state a premium seller reads (delta, sigma distance, time left, sleeps)
+-- next to the P&L. Prometheus keeps the same gauge only for a few days; this
+-- table is the ground truth the state-based rules engine is designed on.
+CREATE TABLE IF NOT EXISTS position_ticks (
+    id              BIGSERIAL PRIMARY KEY,
+    ts              TIMESTAMPTZ NOT NULL,
+    position_id     BIGINT NOT NULL,
+    underlying      TEXT NOT NULL,
+    spot            DOUBLE PRECISION,
+    credit          DOUBLE PRECISION NOT NULL,
+    price           DOUBLE PRECISION NOT NULL,
+    captured        DOUBLE PRECISION NOT NULL,
+    peak_captured   DOUBLE PRECISION NOT NULL,
+    pnl_now         DOUBLE PRECISION NOT NULL,
+    short_strike    DOUBLE PRECISION NOT NULL,
+    option_right    TEXT NOT NULL,
+    short_delta     DOUBLE PRECISION,
+    short_iv        DOUBLE PRECISION,
+    sigma_dist      DOUBLE PRECISION,
+    hours_to_expiry DOUBLE PRECISION NOT NULL,
+    hours_to_close  DOUBLE PRECISION,
+    sleeps_tonight  BOOLEAN,
+    decision        TEXT NOT NULL,
+    reason          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ticks_position ON position_ticks(position_id, ts);
+
 CREATE TABLE IF NOT EXISTS equity_curve (
     ts       TIMESTAMPTZ NOT NULL DEFAULT now(),
     equity   DOUBLE PRECISION NOT NULL,

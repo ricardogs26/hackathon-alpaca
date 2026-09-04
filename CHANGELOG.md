@@ -5,6 +5,27 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.4.0 — 2026-09-04 · phase 0: instrumentation
+
+- **Position ticks.** Every exits pass (~60s) records, per open position, the
+  state a premium seller reads before deciding: short-leg delta and IV (one
+  snapshot per position), distance to the short strike in units of the expected
+  move (`sigma_dist`), hours to expiry and to the close, whether the position
+  sleeps through tonight, captured fraction, peak and P&L — next to the
+  decision the current rules took. Table `position_ticks`, pure builder in
+  `agent/state.py`. Recorded AFTER the money decision and best-effort: a tick
+  failure is counted (`optionwright_errors_total{where="tick"}`) and never
+  delays a close. This is the ground truth the state-based rules engine
+  (phase 1+) will be designed on; nothing in the agent's behaviour changes.
+- **Expiry window in trading sessions.** `EXPIRY_MIN_DAYS`/`MAX_DAYS` now count
+  exchange sessions (Alpaca calendar), not calendar days. On Thu 3-Sep a 2-3 day
+  window landed on Sat/Sun and the agent logged "no expiry" all morning; and
+  1 day after Fri 4-Sep is Tue 8-Sep, because Mon 7-Sep is Labor Day. Falls
+  back to calendar days if the calendar can't be read. `EXPIRY_MIN_DAYS` goes
+  back to 2 in the manifest.
+- 19 new tests (121 total): OCC parsing, sigma distance, the tick, the session
+  window across a weekend and a holiday, and the runner's tick path.
+
 ## 0.3.0 — 2026-09-02 · exits on their own clock
 
 - **Exits every 60s, entries every 180s.** `manage_positions` (take-profit,
