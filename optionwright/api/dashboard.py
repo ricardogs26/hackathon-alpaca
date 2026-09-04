@@ -305,7 +305,7 @@ async function refresh(){
         return `<tr><td>${p.ts_open.slice(5,16).replace('T',' ')}</td><td>${p.underlying} ${p.option_right}</td>`+
                `<td style="font-family:var(--mono);font-size:.8rem">${legs}</td><td>${p.contracts}</td>`+
                `<td>${fmt(p.credit)}</td><td>${money(p.max_loss)}</td>`+
-               `<td><span class="tag ${p.status==='open'?'t-open':'t-closed'}">${p.status}</span></td>`+
+               `<td><span class="tag ${['open','closing','pending'].includes(p.status)?'t-open':'t-closed'}">${p.status}</span></td>`+
                `<td class="${pnlc}">${pnl==null?'—':money(pnl)}</td></tr>`;
       }).join('')+'</table></div>';
   }
@@ -356,9 +356,10 @@ function buildEvents(){
              reason:d.reason||d.rationale||''});
   }
   for(const p of _allPos){
+    if(p.status==='unfilled') continue;                 // never a position: no money moved
     ev.push({t:p.ts_open, u:p.underlying, kind:'open',
              dir:p.option_right==='call'?'bearish':'bullish', conf:p.open_confidence,
-             contracts:p.contracts, credit:p.credit, open:p.status==='open'});
+             contracts:p.contracts, credit:p.credit, open:['open','closing','pending'].includes(p.status)});
     if(p.status==='closed'){
       ev.push({t:p.ts_close||p.ts_open, u:p.underlying, kind:'close',
                reason:p.exit_reason||'exit by rule', pnl:p.realized_pnl});

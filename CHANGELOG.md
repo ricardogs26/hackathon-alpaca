@@ -29,7 +29,7 @@ tag is `v<version>`.
   state rather than crying wolf.
 - Metrics `optionwright_orders_total{kind,result}`; positions carry
   `fill_credit`, `fill_exit_price`, `close_attempts`, `pending_order_id`.
-- 15 new tests (219 total).
+- 14 new tests (218 total).
 
 ## 0.8.1 — 2026-09-04
 
