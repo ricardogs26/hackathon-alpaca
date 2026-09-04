@@ -11,7 +11,8 @@ the plan · **A** high · **M** medium · **L** low.
 state vector + expiry window in trading sessions · duplicate-spread guard ·
 `EXPIRY_MIN_DAYS` weekend/holiday fix.
 
-## Phase 1 · risk math and the state-based rules engine (3-4 days)
+## Phase 1 · risk math and the state-based rules engine — **done in 0.5.0 (2026-09-04)**
+Items 1.1–1.12 shipped; see CHANGELOG 0.5.0 and `docs/RULES.md`. Kept below for the record.
 | # | Activity | Crit | Addresses |
 |---|---|---|---|
 | 1.1 | Parameter table with precedence global → group → underlying, with history (the `trader_rules` pattern) | C | env constants; foundation of the engine |

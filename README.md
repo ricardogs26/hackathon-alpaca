@@ -6,10 +6,10 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-121%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-153%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
-[Live dashboard](https://optionwright.richardx.dev) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
+[Live dashboard](https://optionwright.richardx.dev) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
 
 </div>
 
@@ -72,36 +72,54 @@ Defined-risk credit vertical spreads on the most liquid weekly options.
 
 ## Risk gates
 
-Ten risk checks run in order before any order. Each can veto or shrink a trade, none
-can enlarge one. Position size is not a fixed constant or a model output: it
-emerges from the gates. The request enters at a ceiling and the max-loss and
-daily-budget gates shrink it to fit.
+Fifteen checks run in order before any order (`policy/gates.py`; the full list
+with parameters is in [`docs/RULES.md`](docs/RULES.md)). Each can veto or shrink
+a trade, none can enlarge one. Position size is not a fixed constant or a model
+output: it emerges from the gates. The request enters at a ceiling and the
+max-loss, daily-budget, direction-share and net-delta gates shrink it to fit.
 
 | Gate | Rule |
 |------|------|
-| Consecutive-loss breaker | N losing trades in a row pauses trading |
+| Confidence | A direction below `min_confidence` is vetoed |
+| Consecutive-loss breaker | N losing trades in a row pause trading |
+| Daily-loss pause | A realized loss of 2 % of equity today pauses new entries |
 | Open-positions cap | No more than N concurrent spreads |
-| Per-underlying cap | No more than N concurrent spreads on one symbol (anti-concentration) |
-| Duplicate-spread guard | Never reopen the exact same spread (same legs) while one is already open |
-| Per-underlying cooldown | No re-entry on a symbol within a window |
-| Opening blackout | No trades in the first minutes after the open |
+| Per-underlying cap | No more than N concurrent spreads on one symbol |
+| Duplicate-spread guard | Never reopen the exact same spread while one is open |
+| Cooldown | No re-entry on a symbol within a window |
+| Opening / closing blackout | No entries in the first 30 min or the last 60 min of the session |
 | Macro blackout | No new trades near FOMC / CPI / NFP prints |
-| Max loss per position | At most a fixed % of equity |
-| Daily premium budget | Capital-at-risk per day is bounded |
-| Confidence gate | A direction below `MIN_CONFIDENCE` is vetoed before sizing |
+| Reward/risk floor | A spread paying less than 20 % of its max loss is not opened |
+| Max loss per position | At most 1 % of equity |
+| Daily budget | Capital-at-risk per day bounded at 5 % of equity |
+| Direction share | No side may hold more than 60 % of the open risk |
+| Net delta cap | The book's directional exposure stays under 3 % of equity |
+
+All thresholds live in the `rules` table (scopes global / group / underlying,
+with history) and can be changed at runtime through `PATCH /api/rules`; the
+environment only seeds them.
 
 ## Exit management
 
-Open positions are checked every cycle and closed on a rule, never left to chance.
+Open positions are checked every 60 s and closed on a rule, never left to
+chance. The thresholds are functions of the position's **state** — the short
+leg's delta, time to expiry, time to the close — not fixed multiples of the
+credit.
 
-- **Trailing take-profit**: arms once a set fraction of the credit is captured
-  and closes if the captured fraction falls a set number of points below its
-  peak, so a runner that reverses still exits in the green.
-- **Hard take-profit** ceiling: bank automatically at a set fraction of the credit.
-- **Stop-loss** once the loss reaches a multiple of the credit.
+- **Stop by delta**: closes when the short leg's |delta| reaches 0.45, the
+  thesis is dead whatever the P&L; a **credit stop** at 1.0× caps the loss and
+  is the only stop when the delta is unknown.
+- **Take-profit by time**: 50 % of the credit with more than a day to expiry,
+  25 % in the last hours (the theta is collected; the gamma left isn't worth it).
+- **Trailing take-profit**: arms at 30 % captured and closes 7 points below
+  the peak, so a runner that reverses still exits in the green.
+- **Overnight rule**: in `flat` mode every position that would sleep is closed
+  30 min before the close; in `delta` mode a position may sleep only if it is
+  small and the book is balanced.
 - **Forced close on the expiration day** to avoid assignment and pin risk.
 
-Between those bounds the agent holds, so time decay works in its favor.
+`python -m optionwright.replay` runs these rules over the recorded ticks and
+shows where a candidate set of parameters would have closed each real position.
 
 ## The model
 
@@ -110,11 +128,11 @@ Between those bounds the agent holds, so time decay works in its favor.
 - **What it sees** (`AGENT_RICH_CONTEXT`): besides the two pre-built spreads, the
   model gets market signals computed in code as categorical flags (5-day trend,
   momentum vs moving average, realized-volatility regime), its recent outcomes on
-  that underlying (wins by direction), and a summary of the open book (positions
-  per underlying and direction, concentration, today's P&L). It reasons over all
-  of that, but every number is resolved in code; the model never compares raw
-  numbers.
-- A **confidence gate**: a direction below `MIN_CONFIDENCE` is vetoed before
+  that underlying (wins by direction), and a summary of the open book (open
+  count, today's P&L, losing streak). It reasons over all of that, but every
+  number is resolved in code; the model never compares raw numbers. Direction
+  concentration is deliberately NOT shown to the model: the gates enforce it.
+- A **confidence gate**: a direction below `min_confidence` is vetoed before
   sizing.
 - It talks to any **OpenAI-compatible** endpoint. The deployed agent runs
   **Qwen 72B via Featherless** as the primary model, with a **local Ollama as an
@@ -158,10 +176,8 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `FALLBACK_LLM_BASE_URL` / `FALLBACK_LLM_MODEL` | Optional local fallback model |
 | `UNDERLYINGS` | Comma-separated tickers (default `SPY,QQQ,IWM`) |
 | `CYCLE_SECONDS` | How often the agent evaluates the market |
-| `MAX_OPEN_POSITIONS` / `MAX_PER_UNDERLYING` | Position caps (global and per symbol) |
-| `MAX_LOSS_PCT` / `DAILY_BUDGET_PCT` | Capital-at-risk limits |
-| `HARD_TAKE_PROFIT` / `TRAIL_ACTIVATION` / `TRAIL_GIVEBACK` / `STOP_LOSS_MULT` | Exit thresholds (see Exit management) |
-| `MIN_CONFIDENCE` | Minimum model confidence to open a trade |
+| Rule parameters (`MAX_LOSS_PCT`, `STOP_DELTA`, `OVERNIGHT_MODE`, …) | **Seeds** for the `rules` table on first start; afterwards edit via `PATCH /api/rules`. Full list: [`docs/RULES.md`](docs/RULES.md) |
+| `RULES_TOKEN` | Bearer token for `PATCH /api/rules`; empty disables edits |
 | `AGENT_RICH_CONTEXT` | Feed the model market signals, recent outcomes and the open book |
 | `EXPIRY_MIN_DAYS` / `EXPIRY_MAX_DAYS` | Target expiration window, in trading sessions from today |
 
@@ -170,12 +186,13 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 ```
 optionwright/
   options/    chain models + deterministic spread selection   (pure, tested)
-  policy/     the risk gates                                   (pure, tested)
+  policy/     the risk gates + the rule-parameter registry     (pure, tested)
   agent/      the cycle loop, the LLM analyzer, market perception, exits, the runner
   broker/     Alpaca chain data + multi-leg execution via CLI
   storage/    Postgres schema + reads (orders, equity, decisions)
-  api/        FastAPI: read-only endpoints + the live dashboard
-tests/        121 tests over the deterministic core
+  api/        FastAPI: read-only endpoints, the rules API + the live dashboard
+  replay.py   the exit rules over recorded ticks, simulated vs actual
+tests/        153 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -190,15 +207,17 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
   expected-move units, time to expiry and to the close, whether it sleeps
   overnight, captured fraction and P&L, next to the decision taken. The
   dataset the next generation of exit rules is designed on.
-- **Dashboard** at `/`: equity curve, open and closed spreads, and the decision
-  log (the reason and gate verdict behind every cycle).
+- **Dashboard** at `/`: equity curve, open positions with their live state
+  (delta, σ distance, time left, what the rules say), the effective rules, open
+  and closed spreads, and the decision log (the reason and gate verdict behind
+  every cycle).
 - **Grafana** dashboard under [`k8s/grafana`](k8s/grafana).
 
 ## Tests
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 121 tests, no network or account needed
+pytest -q          # 153 tests, no network or account needed
 ```
 
 The deterministic core (spread selection, the risk gates, exit decisions, market

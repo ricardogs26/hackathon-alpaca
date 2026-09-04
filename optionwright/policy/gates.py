@@ -3,28 +3,53 @@ Risk gates. An ordered list of checks that can only ever VETO or SHRINK a
 proposed trade, never enlarge it. This is where the agent's discipline lives.
 
 The gates are pure: they read a `PolicyState` snapshot passed in by the caller
-(the loop builds it from Postgres/Redis and the clock) and a `RuleSet` of
-tunable limits. No I/O here, so every gate is unit-tested against hand-built
-state. The order matters and is fixed.
+(the runner builds it from Postgres and the clock) and a `RuleSet` of limits
+resolved from the parameter table (policy/params.py). No I/O here, so every
+gate is unit-tested against hand-built state. The order matters and is fixed.
+
+Phase 1 (post-mortem of the 31-Aug → 3-Sep week) added the gates that would
+have stopped that week's loss: the confidence gate moved here from the loop,
+a daily-loss pause, no entries in the last hour, a minimum reward/risk, a cap
+on the share of risk on one side and a cap on the book's net delta. Every
+input that depends on the network (net delta, minutes to close) is optional:
+unknown means the gate is skipped, never that it invents a number.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from optionwright.options.models import VerticalSpread
+from optionwright.options.models import Direction, VerticalSpread
 
 
 @dataclass(frozen=True)
 class RuleSet:
-    max_loss_pct: float = 0.01          # max loss per position as a fraction of equity
-    max_open_positions: int = 3
-    max_per_underlying: int = 2         # cap concurrent positions on one symbol (anti-concentration)
-    daily_budget_pct: float = 0.05      # capital-at-risk deployable per day
-    cooldown_seconds: float = 3600.0    # per-underlying re-entry cooldown
+    max_loss_pct: float = 0.01
+    max_open_positions: int = 6
+    max_per_underlying: int = 2
+    daily_budget_pct: float = 0.05
+    cooldown_seconds: float = 2700.0
     max_consecutive_losses: int = 3
     opening_blackout_minutes: float = 30.0
     macro_blackout_minutes: float = 60.0
-    min_confidence: float = 0.6         # only open when the LLM is at least this sure
+    min_confidence: float = 0.6
+    max_direction_share: float = 0.60
+    max_net_delta_pct: float = 0.03
+    min_reward_risk: float = 0.20
+    max_daily_loss_pct: float = 0.02
+    no_entry_minutes_before_close: float = 60.0
+
+    @classmethod
+    def from_params(cls, params, underlying: str | None = None, group: str | None = None) -> "RuleSet":
+        g = lambda k: params.get(k, underlying, group)  # noqa: E731
+        return cls(
+            max_loss_pct=g("max_loss_pct"), max_open_positions=g("max_open_positions"),
+            max_per_underlying=g("max_per_underlying"), daily_budget_pct=g("daily_budget_pct"),
+            cooldown_seconds=g("cooldown_seconds"), max_consecutive_losses=g("max_consecutive_losses"),
+            opening_blackout_minutes=g("opening_blackout_minutes"), macro_blackout_minutes=g("macro_blackout_minutes"),
+            min_confidence=g("min_confidence"), max_direction_share=g("max_direction_share"),
+            max_net_delta_pct=g("max_net_delta_pct"), min_reward_risk=g("min_reward_risk"),
+            max_daily_loss_pct=g("max_daily_loss_pct"), no_entry_minutes_before_close=g("no_entry_minutes_before_close"),
+        )
 
 
 @dataclass(frozen=True)
@@ -38,6 +63,11 @@ class PolicyState:
     minutes_since_open: float | None = None           # None = unknown (gate skipped)
     minutes_to_macro: float | None = None             # None = no upcoming macro event
     open_signatures: frozenset = frozenset()          # "short_symbol|long_symbol" of open spreads
+    # phase 1
+    risk_by_direction: dict = field(default_factory=dict)   # {"bullish": $max_loss, "bearish": $max_loss} of open spreads
+    net_delta_usd: float | None = None                 # signed $ delta of the book (None = no ticks yet -> gate skipped)
+    minutes_to_close: float | None = None              # None = unknown (gate skipped)
+    realized_pnl_today: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -54,11 +84,17 @@ def _max_contracts_by_loss(spread: VerticalSpread, budget: float) -> int:
     return int(budget // spread.max_loss)
 
 
+def _delta_sign(direction: Direction) -> int:
+    # A short put spread is long delta; a short call spread is short delta.
+    return 1 if direction is Direction.BULLISH else -1
+
+
 def evaluate(
     spread: VerticalSpread,
     requested_contracts: int,
     state: PolicyState,
     rules: RuleSet | None = None,
+    confidence: float | None = None,
 ) -> Verdict:
     rules = rules or RuleSet()
     if requested_contracts < 1:
@@ -66,9 +102,18 @@ def evaluate(
 
     n = requested_contracts
 
+    # 0 — Confidence gate: the direction alone is not enough to put money on the line.
+    if confidence is not None and confidence < rules.min_confidence:
+        return Verdict(False, 0, f"low confidence {confidence:.2f} < {rules.min_confidence:.2f}")
+
     # 1 — Consecutive-loss breaker (hard stop, first so nothing slips through).
     if state.consecutive_losses >= rules.max_consecutive_losses:
         return Verdict(False, 0, f"circuit breaker: {state.consecutive_losses} consecutive losses")
+
+    # 1b — Daily loss pause: after losing this much today, no new entries (3-Sep: −8% in a day).
+    daily_loss_cap = state.equity * rules.max_daily_loss_pct
+    if state.realized_pnl_today <= -daily_loss_cap:
+        return Verdict(False, 0, f"daily loss pause: ${-state.realized_pnl_today:.0f} >= ${daily_loss_cap:.0f}")
 
     # 2 — Open positions cap (global).
     if state.open_positions >= rules.max_open_positions:
@@ -94,9 +139,17 @@ def evaluate(
     if state.minutes_since_open is not None and state.minutes_since_open < rules.opening_blackout_minutes:
         return Verdict(False, 0, f"opening blackout: {state.minutes_since_open:.0f}min")
 
+    # 4b — Closing blackout: no entries in the last hour (#15/#17 opened at 15:03/15:56 ET for $0.56).
+    if state.minutes_to_close is not None and state.minutes_to_close <= rules.no_entry_minutes_before_close:
+        return Verdict(False, 0, f"closing blackout: {state.minutes_to_close:.0f}min to close")
+
     # 5 — Macro blackout.
     if state.minutes_to_macro is not None and state.minutes_to_macro < rules.macro_blackout_minutes:
         return Verdict(False, 0, f"macro blackout: event in {state.minutes_to_macro:.0f}min")
+
+    # 5b — Reward/risk floor: a spread that pays less than the probability it assumes is not opened.
+    if spread.max_loss > 0 and spread.max_profit / spread.max_loss < rules.min_reward_risk:
+        return Verdict(False, 0, f"reward/risk {spread.max_profit / spread.max_loss:.2f} < {rules.min_reward_risk:.2f}")
 
     # 6 — Max loss per position (shrinks n to fit the per-position budget).
     per_pos_budget = state.equity * rules.max_loss_pct
@@ -112,6 +165,37 @@ def evaluate(
     if n_by_daily < 1:
         return Verdict(False, 0, f"daily budget exhausted (${state.premium_at_risk_today:.0f}/${daily_budget:.0f})")
     n = min(n, n_by_daily)
+
+    # 8 — Direction share: no side may hold more than max_direction_share of the
+    # open risk once the book has both sides' worth of positions. The first
+    # position is exempt (100% of nothing). 1-3 Sep: six bear calls, one bet.
+    side = spread.direction.value
+    same = float(state.risk_by_direction.get(side, 0.0))
+    other = sum(float(v) for k, v in state.risk_by_direction.items() if k != side)
+    if same > 0 or other > 0:
+        s = rules.max_direction_share
+        # (same + m·L) / (same + other + m·L) <= s  ->  m <= (s·other − (1−s)·same) / (L·(1−s))
+        room = (s * other - (1.0 - s) * same) / (spread.max_loss * (1.0 - s)) if s < 1.0 else float("inf")
+        m = int(room) if room != float("inf") else n
+        if m < 1:
+            return Verdict(False, 0, f"direction share: {side} already {same / (same + other):.0%} of open risk (max {s:.0%})")
+        n = min(n, m)
+
+    # 9 — Net delta cap: the book's directional exposure in $ stays under a
+    # fraction of equity. Skipped while no tick has measured the book yet.
+    if state.net_delta_usd is not None:
+        spot_proxy = spread.short_leg.strike           # within ~1% of spot for a 0.30-delta short
+        per_contract = abs(spread.short_leg.delta) * 100.0 * spot_proxy
+        if per_contract > 0:
+            cap = state.equity * rules.max_net_delta_pct
+            sign = _delta_sign(spread.direction)
+            # allowed m: |net + sign·m·per| <= cap
+            lo = (-cap - state.net_delta_usd) / (sign * per_contract)
+            hi = (cap - state.net_delta_usd) / (sign * per_contract)
+            m_max = int(max(lo, hi))
+            if m_max < 1:
+                return Verdict(False, 0, f"net delta cap: book ${state.net_delta_usd:+.0f} of ±${cap:.0f}, {side} adds more")
+            n = min(n, m_max)
 
     reason = f"approved {n}x (max loss ${spread.max_loss * n:.0f})"
     if n < requested_contracts:

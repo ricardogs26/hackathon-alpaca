@@ -5,6 +5,44 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.5.0 — 2026-09-04 · phase 1: risk math and the state-based rules engine
+
+The judged week (31-Aug → 3-Sep) ended at −6.9 %: 17 wins averaging $174
+against 5 losses averaging $1,510, every loss a position that slept overnight,
+six bear calls on SPY+QQQ as one $18.7k bet. This release changes the rules
+that lost that money. Full rule list and order: `docs/RULES.md`.
+
+- **Rule parameters in Postgres** (`rules`, `rules_history`), declared once in
+  `policy/params.py` with type, bounds and meaning, resolved with precedence
+  underlying > group > global > default. The environment only seeds the global
+  scope on first start. `GET /api/rules[?underlying=]`, `GET /api/rules/history`,
+  `PATCH /api/rules` (Bearer `RULES_TOKEN`; disabled when unset; reason
+  mandatory). `RuleSet` and `ExitParams` are built from the table — the
+  strategy is no longer defined in three places.
+- **Exits by state** (`agent/exits.py`): stop when the short leg's |delta|
+  reaches `stop_delta` (0.45) with the credit stop as a cap at 1.0× (was 2.0×);
+  take-profit stepped by time (50 % with >24 h to expiry, 25 % after); the
+  trailing unchanged; and the **overnight rule**: `flat` mode closes every
+  position that would sleep 30 min before the close (the post-mortem replay:
+  +$1,300 vs −$6,518), `delta` mode lets one sleep only if its short delta ≤
+  0.35 and the book's net delta ≤ 3 % of equity. Every network input is
+  optional: without a greeks snapshot the credit stop still protects.
+- **Entries** (`policy/gates.py`): the confidence gate moves into the engine;
+  new daily-loss pause (2 %), closing blackout (no entries in the last 60 min),
+  reward/risk floor (0.20), **direction share** (no side above 60 % of open
+  risk; first position exempt; shrinks before it vetoes) and **net delta cap**
+  (3 % of equity, from the latest ticks; skipped while unmeasured). Sizing seeds:
+  1 % per position, 5 % per day, 6 open, 2 per underlying.
+- **Concentration leaves the prompt.** The model no longer sees direction or
+  concentration of the book (it sat on a knife edge: abstain 0.40 / bearish 0.80
+  on the same context); the gates enforce it.
+- **Replay harness** `python -m optionwright.replay [--stop-delta …]`: the exit
+  rules over recorded ticks, simulated vs actual, so a rule is validated on the
+  ticks the agent really saw before it touches an order.
+- Dashboard: "Open positions · state" (delta, σ, time left, sleeps, what the
+  rules say) and "Rules" (effective parameters with their scope).
+- 32 new tests (153 total).
+
 ## 0.4.0 — 2026-09-04 · phase 0: instrumentation
 
 - **Position ticks.** Every exits pass (~60s) records, per open position, the

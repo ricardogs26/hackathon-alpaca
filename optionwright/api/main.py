@@ -9,9 +9,10 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 
-from optionwright import __version__, metrics  # noqa: F401 — metrics registers at import
+from optionwright import __version__, metrics
+from optionwright.policy.params import REGISTRY, Params, seed_from_settings  # noqa: F401 — metrics registers at import
 from optionwright.settings import get_settings
 
 logger = logging.getLogger("optionwright.api")
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
     s = get_settings()
     try:
         store.init_schema()
+        store.seed_rules(seed_from_settings(s))   # env seeds the global scope once; the table rules after
         metrics.set_position_gauges(store.get_positions(200))  # correct at rest, before any cycle
         curve = store.get_equity_curve(1)  # seed equity so it doesn't flash $0 after a restart
         if curve:
@@ -146,6 +148,62 @@ def equity_daily(limit: int = 120) -> list[dict]:
 
     limit = max(1, min(limit, 400))
     return _cached(f"equity_daily:{limit}", lambda: store.get_equity_daily(limit))
+
+
+@app.get("/api/positions/state")
+def positions_state() -> list[dict]:
+    """Open positions with their latest state tick (delta, sigma distance,
+    time left, sleeps, and what the exit rules decided)."""
+    from optionwright.storage import store
+
+    return _cached("positions_state", store.open_position_states)
+
+
+@app.get("/api/rules")
+def rules(underlying: str | None = None, group: str | None = None) -> dict:
+    """Effective rule parameters (resolved through underlying > group > global >
+    default) with the scope each value came from, plus the registry."""
+    from optionwright.storage import store
+
+    params = Params(_cached("rules_raw", store.load_rules))
+    return {
+        "underlying": underlying, "group": group,
+        "effective": params.effective(underlying, group),
+        "source": {k: params.source(k, underlying, group) for k in REGISTRY},
+        "registry": {k: {"type": sp.type, "default": sp.default, "lo": sp.lo, "hi": sp.hi,
+                         "choices": list(sp.choices), "section": sp.section, "description": sp.description}
+                     for k, sp in REGISTRY.items()},
+    }
+
+
+@app.get("/api/rules/history")
+def rules_history(limit: int = 50) -> list[dict]:
+    from optionwright.storage import store
+
+    return _cached(f"rules_history:{limit}", lambda: store.rules_history(limit))
+
+
+@app.patch("/api/rules")
+def patch_rule(body: dict, authorization: str | None = Header(default=None)) -> dict:
+    """Change one parameter: {scope, key, value, reason, changed_by?}. Requires
+    `Authorization: Bearer <RULES_TOKEN>`; with no token configured the endpoint
+    is disabled. Every change lands in rules_history."""
+    from optionwright.storage import store
+
+    token = get_settings().rules_token
+    if not token:
+        raise HTTPException(status_code=403, detail="rule edits are disabled (RULES_TOKEN not set)")
+    if authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="bad token")
+    try:
+        out = store.set_rule(
+            str(body.get("scope", "global")), str(body.get("key", "")), body.get("value"),
+            str(body.get("changed_by") or "api"), str(body.get("reason") or ""),
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _cache.pop("rules_raw", None)
+    return out
 
 
 @app.get("/api/positions")

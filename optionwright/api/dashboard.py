@@ -142,6 +142,14 @@ DASHBOARD_HTML = r"""<!doctype html>
       <div class="sub" id="rangepnl" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"></div>
     </div>
     <div class="card wide">
+      <h2>Open positions · state<span class="subt">what the exit rules read every 60s</span></h2>
+      <div id="pstate"><div class="muted">No open positions.</div></div>
+    </div>
+    <div class="card wide">
+      <h2>Rules<span class="subt">effective parameters · global scope unless marked</span></h2>
+      <div id="rules"><div class="muted">Loading…</div></div>
+    </div>
+    <div class="card wide">
       <h2>Positions</h2>
       <div id="positions"><div class="muted">No positions yet.</div></div>
     </div>
@@ -308,6 +316,36 @@ async function refresh(){
   }
   _decisions = await j('/api/decisions?limit=100') || [];
   renderDecisions();
+  renderState(await j('/api/positions/state') || []);
+  renderRules(await j('/api/rules'));
+}
+
+function renderState(rows){
+  if(!rows.length){ $('pstate').innerHTML = '<div class="muted">No open positions.</div>'; return; }
+  const n = v => v==null ? '—' : v;
+  const pct = v => v==null ? '—' : (v*100).toFixed(0)+'%';
+  $('pstate').innerHTML = '<div style="overflow-x:auto"><table><tr><th>Pos</th><th>Underlying</th><th>Short</th>'+
+    '<th>Spot</th><th>Captured</th><th>Peak</th><th>P&L now</th><th>δ short</th><th>IV</th><th>σ dist</th>'+
+    '<th>h → expiry</th><th>h → close</th><th>Sleeps</th><th>Rules say</th></tr>'+
+    rows.map(r=>`<tr><td>#${r.id}</td><td>${r.underlying} ${r.option_right}</td>`+
+      `<td style="font-family:var(--mono);font-size:.8rem">${r.short_symbol.replace(/^[A-Z]+/,'').slice(-8)}</td>`+
+      `<td>${n(r.spot)}</td><td>${pct(r.captured)}</td><td>${pct(r.peak_captured)}</td>`+
+      `<td class="${(r.pnl_now||0)>=0?'up':'down'}">${r.pnl_now==null?'—':money(r.pnl_now)}</td>`+
+      `<td>${n(r.short_delta)}</td><td>${n(r.short_iv)}</td><td>${n(r.sigma_dist)}</td>`+
+      `<td>${n(r.hours_to_expiry)}</td><td>${n(r.hours_to_close)}</td><td>${r.sleeps_tonight==null?'—':(r.sleeps_tonight?'yes':'no')}</td>`+
+      `<td>${r.decision||'—'}${r.reason?' · '+r.reason:''}</td></tr>`).join('')+'</table></div>';
+}
+
+function renderRules(rl){
+  if(!rl){ $('rules').innerHTML = '<div class="muted">Rules unavailable.</div>'; return; }
+  const keys = Object.keys(rl.registry);
+  const col = sec => keys.filter(k=>rl.registry[k].section===sec).map(k=>{
+    const src = rl.source[k]; const mark = (src==='default'||src==='global') ? '' : ` <span class="tag t-open">${src}</span>`;
+    return `<div class="sessrow" title="${rl.registry[k].description}"><span class="k">${k}${mark}</span><span class="n" style="font-family:var(--mono)">${rl.effective[k]}</span></div>`;
+  }).join('');
+  $('rules').innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 24px">`+
+    `<div><div class="sub" style="margin-bottom:6px">entries · gates</div>${col('risk')}</div>`+
+    `<div><div class="sub" style="margin-bottom:6px">exits</div>${col('exits')}</div></div>`;
 }
 
 let _decisions = [];

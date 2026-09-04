@@ -67,37 +67,69 @@ spec:
               value: "60"
             - name: LOG_LEVEL
               value: "INFO"
-            # Risk / strategy tuning — judged-week sprint (Sep 1-3): shorter DTE
-            # (2d) so positions expire inside the judged window and rotate,
-            # faster take-profit, more slots so it never blocks. Diversification
-            # (per-underlying cap) intact; max loss still defined-risk.
-            - name: MAX_OPEN_POSITIONS
-              value: "8"
-            - name: MAX_PER_UNDERLYING
-              value: "3"
-            # Counted in trading SESSIONS since 0.4.0 (weekends/holidays skipped):
-            # the 3-Sep "no expiry" morning came from a calendar-day window
-            # landing on a weekend. Back to 2 sessions.
-            - name: EXPIRY_MIN_DAYS
+            # ── Rule parameters: SEEDS ONLY (0.5.0). The `rules` table in Postgres
+            # is the source of truth (scopes global/group/underlying, history);
+            # these seed the global scope on first start. Edit via PATCH /api/rules.
+            # Registry and meaning: optionwright/policy/params.py · docs/RULES.md
+            # entries
+            - name: EXPIRY_MIN_DAYS            # trading SESSIONS (weekends/holidays skipped since 0.4.0)
               value: "2"
             - name: EXPIRY_MAX_DAYS
               value: "3"
-            - name: HARD_TAKE_PROFIT
-              value: "0.40"
+            - name: MAX_OPEN_POSITIONS
+              value: "6"
+            - name: MAX_PER_UNDERLYING
+              value: "2"
+            - name: MAX_LOSS_PCT
+              value: "0.01"
+            - name: DAILY_BUDGET_PCT
+              value: "0.05"
+            - name: MAX_DIRECTION_SHARE
+              value: "0.60"
+            - name: MAX_NET_DELTA_PCT
+              value: "0.03"
+            - name: MIN_REWARD_RISK
+              value: "0.20"
+            - name: MIN_CONFIDENCE
+              value: "0.6"
+            - name: COOLDOWN_SECONDS
+              value: "2700"
+            - name: MAX_CONSECUTIVE_LOSSES
+              value: "3"
+            - name: MAX_DAILY_LOSS_PCT
+              value: "0.02"
+            - name: OPENING_BLACKOUT_MINUTES
+              value: "30"
+            - name: NO_ENTRY_MINUTES_BEFORE_CLOSE
+              value: "60"
+            # exits
+            - name: STOP_DELTA
+              value: "0.45"
+            - name: STOP_LOSS_MULT
+              value: "1.0"
+            - name: TAKE_PROFIT_FAR
+              value: "0.50"
+            - name: TAKE_PROFIT_NEAR
+              value: "0.25"
+            - name: TAKE_PROFIT_STEP_HOURS
+              value: "24"
             - name: TRAIL_ACTIVATION
               value: "0.30"
             - name: TRAIL_GIVEBACK
               value: "0.07"
-            - name: MAX_LOSS_PCT
-              value: "0.033"
-            - name: COOLDOWN_SECONDS
-              value: "2700"
-            - name: DAILY_BUDGET_PCT
-              value: "0.22"
-            - name: MIN_CONFIDENCE
-              value: "0.6"
+            - name: OVERNIGHT_MODE
+              value: "flat"
+            - name: FLATTEN_MINUTES_BEFORE_CLOSE
+              value: "30"
+            - name: OVERNIGHT_MAX_SHORT_DELTA
+              value: "0.35"
+            - name: OVERNIGHT_NET_DELTA_PCT
+              value: "0.03"
             - name: AGENT_RICH_CONTEXT
               value: "true"
+            # Bearer token for PATCH /api/rules. Optional: without it edits over the API are disabled.
+            - name: RULES_TOKEN
+              valueFrom: { secretKeyRef: { name: optionwright-secrets, key: RULES_TOKEN, optional: true } }
           readinessProbe:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5

@@ -60,6 +60,18 @@ def sigma_distance(spot: float, strike: float, right: str, iv: float | None, hou
     return round(dist / expected_move, 3)
 
 
+def position_clock(short_symbol: str, now: datetime, next_close: datetime | None) -> tuple[float, float | None, bool | None]:
+    """(hours_to_expiry, hours_to_close, sleeps_tonight) for a position — the
+    time inputs the exit rules and the tick share."""
+    _, expiry, _, _ = parse_occ(short_symbol)
+    hours_to_expiry = max(0.0, (expiry_moment(expiry) - now).total_seconds() / 3600.0)
+    if next_close is None:
+        return hours_to_expiry, None, None
+    hours_to_close = max(0.0, (next_close - now).total_seconds() / 3600.0)
+    sleeps = date.fromisoformat(expiry) > next_close.astimezone(timezone.utc).date()
+    return hours_to_expiry, hours_to_close, sleeps
+
+
 @dataclass(frozen=True)
 class PositionTick:
     position_id: int
@@ -100,16 +112,11 @@ def compute_tick(
     next_close: datetime | None,
 ) -> PositionTick:
     """Build the tick from what the exits pass already knows plus one snapshot."""
-    _, expiry, right, strike = parse_occ(pos["short_symbol"])
+    _, _, right, strike = parse_occ(pos["short_symbol"])
     credit = float(pos["credit"])
     captured = (credit - price) / credit if credit > 0 else 0.0
     pnl_now = round((credit - price) * 100 * int(pos["contracts"]), 2)
-    hours_to_expiry = max(0.0, (expiry_moment(expiry) - now).total_seconds() / 3600.0)
-    hours_to_close = None
-    sleeps = None
-    if next_close is not None:
-        hours_to_close = max(0.0, (next_close - now).total_seconds() / 3600.0)
-        sleeps = date.fromisoformat(expiry) > next_close.astimezone(timezone.utc).date()
+    hours_to_expiry, hours_to_close, sleeps = position_clock(pos["short_symbol"], now, next_close)
     return PositionTick(
         position_id=int(pos["id"]),
         ts=now,

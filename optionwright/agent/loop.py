@@ -99,16 +99,9 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
                              False, 0, reason, chosen)
         return {"underlying": underlying, "action": "abstain", "reason": reason}
 
-    # Confidence gate: only trade when the LLM is convinced. Below the floor we
-    # veto — the direction alone is not enough to put money on the line.
-    if proposal.confidence < rules.min_confidence:
-        reason = f"low confidence {proposal.confidence:.2f} < {rules.min_confidence:.2f}"
-        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
-                             False, 0, reason, chosen)
-        return {"underlying": underlying, "action": "vetoed", "reason": reason}
-
+    # Every gate, the confidence one included, lives in policy/gates.py.
     state = deps.build_state(underlying, equity)
-    verdict = evaluate(chosen, _SIZE_CEILING, state, rules)
+    verdict = evaluate(chosen, _SIZE_CEILING, state, rules, confidence=proposal.confidence)
     if not verdict.approved:
         deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
                              False, 0, verdict.reason, chosen)

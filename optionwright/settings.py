@@ -43,22 +43,43 @@ class Settings(BaseSettings):
     cycle_seconds: int = Field(default=180, alias="CYCLE_SECONDS")  # entries pass: chains + LLM
     exit_check_seconds: int = Field(default=60, alias="EXIT_CHECK_SECONDS")  # exits pass: quotes only
     underlyings: str = Field(default="SPY,QQQ,IWM", alias="UNDERLYINGS")
-    # Exit management: trailing take-profit + stop + hard cap. Trailing arms later
-    # (30%) and gives back tighter (7pts) — 1-sep data showed it was closing winners
-    # at ~15% when hard-TP trades averaged 40%, leaving ~$700/day on the table.
-    stop_loss_mult: float = Field(default=2.0, alias="STOP_LOSS_MULT")
-    hard_take_profit: float = Field(default=0.40, alias="HARD_TAKE_PROFIT")
+    # ── Rule parameters: SEEDS ONLY ───────────────────────────────────────────
+    # Since 0.5.0 the gates and the exits read their thresholds from the `rules`
+    # table in Postgres (scopes global / group / underlying, with history). These
+    # env values seed the global scope on first start; editing them afterwards
+    # does nothing once the row exists — change rules through the API or SQL.
+    # Registry with types, bounds and meaning: optionwright/policy/params.py.
+    # exits
+    stop_delta: float = Field(default=0.45, alias="STOP_DELTA")
+    stop_mult: float = Field(default=1.0, alias="STOP_LOSS_MULT")
+    take_profit_far: float = Field(default=0.50, alias="TAKE_PROFIT_FAR")
+    take_profit_near: float = Field(default=0.25, alias="TAKE_PROFIT_NEAR")
+    take_profit_step_hours: float = Field(default=24.0, alias="TAKE_PROFIT_STEP_HOURS")
     trail_activation: float = Field(default=0.30, alias="TRAIL_ACTIVATION")
     trail_giveback: float = Field(default=0.07, alias="TRAIL_GIVEBACK")
-    expiry_min_days: int = Field(default=2, alias="EXPIRY_MIN_DAYS")   # 2-3 DTE (judged sprint)
+    overnight_mode: str = Field(default="flat", alias="OVERNIGHT_MODE")
+    flatten_minutes_before_close: float = Field(default=30.0, alias="FLATTEN_MINUTES_BEFORE_CLOSE")
+    overnight_max_short_delta: float = Field(default=0.35, alias="OVERNIGHT_MAX_SHORT_DELTA")
+    overnight_net_delta_pct: float = Field(default=0.03, alias="OVERNIGHT_NET_DELTA_PCT")
+    # entries
+    expiry_min_days: int = Field(default=2, alias="EXPIRY_MIN_DAYS")   # trading sessions
     expiry_max_days: int = Field(default=3, alias="EXPIRY_MAX_DAYS")
-    # Risk gates — judged sprint: 8 slots x ~3.3%, max 3 per symbol (diversified)
-    max_open_positions: int = Field(default=8, alias="MAX_OPEN_POSITIONS")
-    max_per_underlying: int = Field(default=3, alias="MAX_PER_UNDERLYING")  # anti-concentration
-    max_loss_pct: float = Field(default=0.033, alias="MAX_LOSS_PCT")
-    cooldown_seconds: float = Field(default=2700.0, alias="COOLDOWN_SECONDS")  # 45 min
-    daily_budget_pct: float = Field(default=0.22, alias="DAILY_BUDGET_PCT")
-    min_confidence: float = Field(default=0.6, alias="MIN_CONFIDENCE")  # only open when the LLM is this sure
+    max_open_positions: int = Field(default=6, alias="MAX_OPEN_POSITIONS")
+    max_per_underlying: int = Field(default=2, alias="MAX_PER_UNDERLYING")
+    max_loss_pct: float = Field(default=0.01, alias="MAX_LOSS_PCT")
+    daily_budget_pct: float = Field(default=0.05, alias="DAILY_BUDGET_PCT")
+    cooldown_seconds: float = Field(default=2700.0, alias="COOLDOWN_SECONDS")
+    max_consecutive_losses: int = Field(default=3, alias="MAX_CONSECUTIVE_LOSSES")
+    max_daily_loss_pct: float = Field(default=0.02, alias="MAX_DAILY_LOSS_PCT")
+    opening_blackout_minutes: float = Field(default=30.0, alias="OPENING_BLACKOUT_MINUTES")
+    no_entry_minutes_before_close: float = Field(default=60.0, alias="NO_ENTRY_MINUTES_BEFORE_CLOSE")
+    macro_blackout_minutes: float = Field(default=60.0, alias="MACRO_BLACKOUT_MINUTES")
+    min_confidence: float = Field(default=0.6, alias="MIN_CONFIDENCE")
+    max_direction_share: float = Field(default=0.60, alias="MAX_DIRECTION_SHARE")
+    max_net_delta_pct: float = Field(default=0.03, alias="MAX_NET_DELTA_PCT")
+    min_reward_risk: float = Field(default=0.20, alias="MIN_REWARD_RISK")
+    # Bearer token required by PATCH /api/rules. Empty = rule edits over the API are disabled.
+    rules_token: str = Field(default="", alias="RULES_TOKEN")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     # Contexto agéntico: percepción + memoria + portafolio inyectados al LLM

@@ -65,6 +65,26 @@ CREATE TABLE IF NOT EXISTS position_ticks (
 );
 CREATE INDEX IF NOT EXISTS idx_ticks_position ON position_ticks(position_id, ts);
 
+-- Phase 1: rule parameters with precedence (global / group:<name> / underlying:<SYM>)
+-- and a history of every change. The environment only seeds the global scope.
+CREATE TABLE IF NOT EXISTS rules (
+    scope       TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (scope, key)
+);
+CREATE TABLE IF NOT EXISTS rules_history (
+    id          BIGSERIAL PRIMARY KEY,
+    ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    scope       TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    old_value   TEXT,
+    new_value   TEXT NOT NULL,
+    changed_by  TEXT NOT NULL,
+    reason      TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS equity_curve (
     ts       TIMESTAMPTZ NOT NULL DEFAULT now(),
     equity   DOUBLE PRECISION NOT NULL,

@@ -21,10 +21,12 @@ import time
 
 from optionwright.agent import perception
 from optionwright.agent.analyzer import propose
-from optionwright.agent.state import compute_tick
+from optionwright.agent.exits import ExitParams, decide_exit
 from optionwright.agent.loop import Deps, run_cycle
+from optionwright.agent.state import compute_tick, position_clock
 from optionwright.broker import alpaca
 from optionwright.policy.gates import RuleSet
+from optionwright.policy.params import Params
 from optionwright.settings import get_settings
 from optionwright.storage import store
 
@@ -57,6 +59,37 @@ def _clock() -> tuple[bool, object]:
 
 def _market_open() -> bool:
     return _clock()[0]
+
+
+def _minutes_to_close() -> float | None:
+    from datetime import datetime, timezone
+
+    _, next_close = _clock()
+    if next_close is None:
+        return None
+    return max(0.0, (next_close - datetime.now(timezone.utc)).total_seconds() / 60.0)
+
+
+_PARAMS_TTL = 60.0                      # seconds; the rules table is re-read at most this often
+_params_cache: tuple[float, Params] | None = None
+
+
+def current_params() -> Params:
+    """The rule parameters (policy/params.py) as stored in Postgres, cached 60s.
+    If the table can't be read the last good snapshot is kept — never the
+    registry defaults while a better value existed."""
+    global _params_cache
+    now = time.monotonic()
+    if _params_cache is not None and now - _params_cache[0] < _PARAMS_TTL:
+        return _params_cache[1]
+    try:
+        params = Params(store.load_rules())
+    except Exception as exc:
+        logger.warning("rules table unavailable (%s); keeping %s", exc,
+                       "the last values" if _params_cache else "registry defaults")
+        params = _params_cache[1] if _params_cache else Params()
+    _params_cache = (now, params)
+    return params
 
 
 def _minutes_since_open() -> float | None:
@@ -108,22 +141,17 @@ def manage_positions() -> list[dict]:
 
 def _manage_positions() -> list[dict]:
     """The exits pass proper. Errors on one position never stop the others."""
-    from datetime import date
+    from datetime import date, datetime, timezone
 
     from optionwright import metrics
-    from optionwright.agent.exits import ExitParams, decide_exit
-    from optionwright.storage import store
 
-    s = get_settings()
-    params = ExitParams(
-        stop_mult=s.stop_loss_mult,
-        hard_take_profit=s.hard_take_profit,
-        trail_activation=s.trail_activation,
-        trail_giveback=s.trail_giveback,
-    )
+    params = current_params()
+    _, next_close = _clock()
+    now = datetime.now(timezone.utc)
     today = date.today().isoformat()
     results = []
     spots: dict[str, float] = {}   # one spot read per underlying per pass, for the ticks
+    book_delta_pct: float | None = None   # computed once per pass, only if a rule needs it
 
     all_positions = store.get_positions(200)
     metrics.set_position_gauges(all_positions)
@@ -142,7 +170,19 @@ def _manage_positions() -> list[dict]:
             peak = max(float(pos.get("peak_captured") or 0.0), captured)
             if peak > float(pos.get("peak_captured") or 0.0):
                 store.update_peak_captured(pos["id"], peak)
-            decision = decide_exit(credit, price, is_expiry_day, peak_captured=peak, params=params)
+
+            # State inputs for the rules: one greeks snapshot (best effort) and the clock.
+            xp = ExitParams.from_params(params, pos["underlying"])
+            snap = _snapshot_safe(pos)
+            short_delta = None if snap.get("short_delta") is None else abs(float(snap["short_delta"]))
+            hours_to_expiry, hours_to_close, sleeps = _clock_inputs_safe(pos, now, next_close)
+            if xp.overnight_mode == "delta" and sleeps and book_delta_pct is None:
+                book_delta_pct = _book_delta_pct()
+            decision = decide_exit(
+                credit, price, is_expiry_day, peak_captured=peak, params=xp,
+                short_delta=short_delta, hours_to_expiry=hours_to_expiry, hours_to_close=hours_to_close,
+                sleeps_tonight=sleeps, book_net_delta_pct=book_delta_pct,
+            )
             captured_pct = captured * 100
             pnl_now = round((credit - price) * 100 * pos["contracts"], 2)
             # Surface the live evaluation as a Grafana table row.
@@ -162,31 +202,63 @@ def _manage_positions() -> list[dict]:
                                 "reason": decision.reason, "realized_pnl": pnl_now})
             # Instrumentation AFTER the money decision: a tick that fails never
             # delays or blocks a close.
-            _record_tick(pos, price, peak, decision, spots)
+            _record_tick(pos, price, peak, decision, spots, snap, now, next_close)
         except Exception as exc:
             logger.error("manage position %s failed: %s", pos.get("id"), exc, exc_info=True)
             metrics.ERRORS.labels(where="manage").inc()
     return results
 
 
-def _record_tick(pos: dict, price: float, peak: float, decision, spots: dict[str, float]) -> None:
+def _clock_inputs_safe(pos: dict, now, next_close) -> tuple[float | None, float | None, bool | None]:
+    """Time inputs for the rules, or all-unknown if the symbol can't be parsed —
+    the credit-based rules still protect the position."""
+    try:
+        return position_clock(pos["short_symbol"], now, next_close)
+    except Exception as exc:
+        logger.warning("clock inputs for position %s unavailable: %s", pos.get("id"), exc)
+        return None, None, None
+
+
+def _snapshot_safe(pos: dict) -> dict:
+    """The short leg's delta/IV, or {} — the credit stop still protects without it."""
+    from optionwright import metrics
+
+    try:
+        return alpaca.spread_snapshot(pos["short_symbol"], pos["long_symbol"]) or {}
+    except Exception as exc:
+        logger.warning("snapshot for position %s unavailable: %s", pos.get("id"), exc)
+        metrics.ERRORS.labels(where="snapshot").inc()
+        return {}
+
+
+def _book_delta_pct() -> float | None:
+    """|net $ delta of the book| / equity, or None when unmeasured (delta mode then closes)."""
+    try:
+        net = store.book_net_delta_usd()
+        if net is None:
+            return None
+        equity, _ = _account()
+        return abs(net) / equity if equity > 0 else None
+    except Exception as exc:
+        logger.warning("book net delta unavailable: %s", exc)
+        return None
+
+
+def _record_tick(pos: dict, price: float, peak: float, decision, spots: dict[str, float],
+                 snap: dict, now, next_close) -> None:
     """Phase 0: persist the position's state vector for this tick. Best effort —
     any failure is counted and logged, never raised into the exits pass."""
-    from datetime import datetime, timezone
-
     from optionwright import metrics
 
     try:
         u = pos["underlying"]
         if u not in spots:
             spots[u] = alpaca.get_spot(u)
-        snap = alpaca.spread_snapshot(pos["short_symbol"], pos["long_symbol"]) or {}
-        _, next_close = _clock()
         tick = compute_tick(
             pos=pos, price=price, peak_captured=peak,
             decision="close" if decision.close else "hold", reason=decision.reason,
             spot=spots.get(u), short_delta=snap.get("short_delta"), short_iv=snap.get("short_iv"),
-            now=datetime.now(timezone.utc), next_close=next_close,
+            now=now, next_close=next_close,
         )
         store.record_tick(tick)
     except Exception as exc:
@@ -194,36 +266,33 @@ def _record_tick(pos: dict, price: float, peak: float, decision, spots: dict[str
         metrics.ERRORS.labels(where="tick").inc()
 
 
-_record_tick_impl = _record_tick   # tests patch `_record_tick`; this keeps the real one reachable
+_record_tick_impl = _record_tick         # tests patch `_record_tick`; this keeps the real one reachable
+_current_params_impl = current_params    # same for `current_params`
 
 
-def _build_deps() -> Deps:
+def _build_deps(params: Params, underlying: str) -> Deps:
+    """Dependencies for one underlying's cycle. Rules resolve per underlying
+    (precedence underlying > group > global) from the parameter table."""
     s = get_settings()
     return Deps(
         account=_account,
         nearest_expiry=lambda u: alpaca.nearest_expiry(u, min_days=s.expiry_min_days, max_days=s.expiry_max_days),
         fetch_chain=alpaca.fetch_chain,
         propose=propose,
-        build_state=lambda u, eq: store.build_policy_state(u, eq, minutes_since_open=_minutes_since_open()),
+        build_state=lambda u, eq: store.build_policy_state(
+            u, eq, minutes_since_open=_minutes_since_open(), minutes_to_close=_minutes_to_close()),
         submit_spread=alpaca.submit_spread,
         record_decision=store.record_decision,
         record_position=store.record_position,
         save_equity=store.save_equity,
-        rules=RuleSet(
-            max_open_positions=s.max_open_positions,
-            max_per_underlying=s.max_per_underlying,
-            max_loss_pct=s.max_loss_pct,
-            cooldown_seconds=s.cooldown_seconds,
-            daily_budget_pct=s.daily_budget_pct,
-            min_confidence=s.min_confidence,
-        ),
+        rules=RuleSet.from_params(params, underlying),
         signals=lambda u, e: perception.compute_signals(
             alpaca.recent_bars(u), alpaca.get_spot(u),
             trend_flat_pct=s.perception_trend_flat_pct,
             vol_high_pct=s.perception_vol_high_pct,
         ),
         memory=lambda u: store.recent_outcomes(u),
-        book=store.book_summary,
+        book=lambda: store.llm_book_view(store.book_summary()),
         rich_context=s.agent_rich_context,
     )
 
@@ -257,11 +326,11 @@ def run_entries() -> list[dict]:
     # and reused across its puts/calls reads (invalidated per pass, no TTL).
     alpaca.new_cycle()
 
-    deps = _build_deps()
+    params = current_params()
     results: list[dict] = []
     for underlying in s.underlyings_list:
         try:
-            result = run_cycle(underlying, deps)
+            result = run_cycle(underlying, _build_deps(params, underlying))
         except Exception as exc:  # one bad underlying never kills the whole pass
             logger.error("cycle failed for %s: %s", underlying, exc, exc_info=True)
             metrics.ERRORS.labels(where="cycle").inc()

@@ -14,26 +14,29 @@ import pytest
 
 from optionwright import metrics
 from optionwright.agent import runner
+from optionwright.policy.params import GLOBAL, Params
 
 
 # ── fakes ─────────────────────────────────────────────────────────────────────
 class _Clock:
-    def __init__(self, is_open):
+    def __init__(self, is_open, next_close=None):
         self.is_open = is_open
+        self.next_close = next_close
 
 
 class _TradingClient:
-    def __init__(self, is_open):
+    def __init__(self, is_open, next_close=None):
         self.calls = 0
         self._open = is_open
+        self._next_close = next_close
 
     def get_clock(self):
         self.calls += 1
-        return _Clock(self._open)
+        return _Clock(self._open, self._next_close)
 
 
-def _use_clock(monkeypatch, is_open: bool) -> _TradingClient:
-    tc = _TradingClient(is_open)
+def _use_clock(monkeypatch, is_open: bool, next_close=None) -> _TradingClient:
+    tc = _TradingClient(is_open, next_close)
     monkeypatch.setattr(runner.alpaca, "_trading_client", lambda: tc)
     return tc
 
@@ -62,6 +65,8 @@ def _fresh_runner_state(monkeypatch):
     monkeypatch.setattr(runner, "_clock_cache", None)
     monkeypatch.setattr(runner, "_exit_lock", threading.Lock())
     monkeypatch.setattr(runner, "get_settings", lambda: _settings())
+    monkeypatch.setattr(runner, "_params_cache", None)
+    monkeypatch.setattr(runner, "current_params", lambda: Params())
     yield
 
 
@@ -115,7 +120,7 @@ def test_run_entries_refreshes_chains_runs_each_underlying_and_isolates_failures
     _use_clock(monkeypatch, True)
     calls = {"new_cycle": 0}
     monkeypatch.setattr(runner.alpaca, "new_cycle", lambda: calls.__setitem__("new_cycle", calls["new_cycle"] + 1))
-    monkeypatch.setattr(runner, "_build_deps", lambda: object())
+    monkeypatch.setattr(runner, "_build_deps", lambda params, u: object())
 
     def fake_cycle(u, deps):
         if u == "QQQ":
@@ -156,11 +161,12 @@ def _wire_store(monkeypatch, positions, price, raise_for=()):
 
     monkeypatch.setattr(runner.alpaca, "current_spread_price", spread_price)
     monkeypatch.setattr(runner.alpaca, "close_spread", lambda s, lng, n, lim: orders.append((s, lng, n, lim)))
-    monkeypatch.setattr(runner, "_record_tick", lambda *a, **k: None)   # instrumentation off here
+    monkeypatch.setattr(runner.alpaca, "spread_snapshot", lambda s, lng: None)   # no greeks unless a test says so
+    monkeypatch.setattr(runner, "_record_tick", lambda *a, **k: None)          # instrumentation off here
     return closes, peaks, orders
 
 
-def _wire_ticks(monkeypatch, snapshot=None, snapshot_raises=False):
+def _wire_ticks(monkeypatch, snapshot=None, snapshot_raises=False, record_raises=False):
     """Re-enable the real _record_tick with fake broker reads; returns the recorded ticks."""
     ticks = []
     monkeypatch.setattr(runner, "_record_tick", runner.__dict__["_record_tick_impl"])
@@ -171,15 +177,20 @@ def _wire_ticks(monkeypatch, snapshot=None, snapshot_raises=False):
             raise RuntimeError("snapshot unavailable")
         return snapshot
 
+    def rec(t):
+        if record_raises:
+            raise RuntimeError("db down")
+        ticks.append(t)
+
     monkeypatch.setattr(runner.alpaca, "spread_snapshot", snap)
-    monkeypatch.setattr(runner.store, "record_tick", lambda t: ticks.append(t))
+    monkeypatch.setattr(runner.store, "record_tick", rec)
     return ticks
 
 
 def test_manage_closes_on_take_profit(monkeypatch):
     closes, peaks, orders = _wire_store(monkeypatch, [_pos(1, credit=1.0, contracts=2)], price=0.50)
     out = runner.manage_positions()
-    # captured 50% >= hard take-profit 40% -> close at price + 0.05, P&L (1.0-0.5)*100*2
+    # captured 50% >= far take-profit 50% -> close at price + 0.05, P&L (1.0-0.5)*100*2
     assert orders == [("S1", "L1", 2, 0.55)]
     assert closes[0][0] == 1 and closes[0][1] == 100.0 and "take-profit" in closes[0][2]
     assert out[0]["action"] == "closed" and out[0]["realized_pnl"] == 100.0
@@ -296,12 +307,22 @@ def test_tick_recorded_after_close_and_marks_decision(monkeypatch):
 def test_tick_failure_never_blocks_the_close(monkeypatch):
     _use_clock(monkeypatch, True)
     closes, _, orders = _wire_store(monkeypatch, [_occ_pos()], price=0.50)
-    ticks = _wire_ticks(monkeypatch, snapshot_raises=True)
+    ticks = _wire_ticks(monkeypatch, record_raises=True)
     before = _val(metrics.ERRORS, where="tick")
     out = runner.manage_positions()
     assert len(orders) == 1 and len(closes) == 1 and out[0]["action"] == "closed"
     assert ticks == []
     assert _val(metrics.ERRORS, where="tick") == before + 1
+
+
+def test_snapshot_failure_keeps_the_credit_stop_and_counts_it(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0)], price=2.10)   # 1.1x loss: credit stop
+    _wire_ticks(monkeypatch, snapshot_raises=True)
+    before = _val(metrics.ERRORS, where="snapshot")
+    runner.manage_positions()
+    assert len(orders) == 1 and "stop-loss" in closes[0][2]
+    assert _val(metrics.ERRORS, where="snapshot") == before + 1
 
 
 def test_tick_tolerates_missing_snapshot(monkeypatch):
@@ -320,3 +341,56 @@ def test_spot_read_once_per_underlying_per_pass(monkeypatch):
     monkeypatch.setattr(runner.alpaca, "get_spot", lambda u: reads.append(u) or 768.0)
     runner.manage_positions()
     assert len(ticks) == 2 and reads == ["SPY"]
+
+
+# ── phase 1: the exits read the state ─────────────────────────────────────────
+def test_delta_stop_closes_from_the_snapshot_before_the_credit_stop(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0)], price=1.15)   # only 0.15x loss
+    monkeypatch.setattr(runner.alpaca, "spread_snapshot", lambda s, lng: {"short_delta": 0.47, "short_iv": 0.2})
+    runner.manage_positions()
+    assert len(orders) == 1 and "short delta 0.47" in closes[0][2]
+
+
+def test_flat_mode_closes_sleepers_in_the_last_half_hour(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    _use_clock(monkeypatch, True, next_close=datetime.now(timezone.utc) + timedelta(minutes=20))
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0)], price=0.95)   # nothing else fires
+    runner.manage_positions()
+    assert len(orders) == 1 and "overnight flatten" in closes[0][2]
+
+
+def test_flat_mode_holds_earlier_in_the_session(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    _use_clock(monkeypatch, True, next_close=datetime.now(timezone.utc) + timedelta(hours=3))
+    _, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0)], price=0.95)
+    runner.manage_positions()
+    assert orders == []
+
+
+def test_exit_params_resolve_per_underlying_from_the_table(monkeypatch):
+    _use_clock(monkeypatch, True)
+    monkeypatch.setattr(runner, "current_params", lambda: Params({GLOBAL: {"stop_delta": 0.60}, "underlying:SPY": {"stop_delta": 0.40}}))
+    closes, _, orders = _wire_store(monkeypatch, [_occ_pos(credit=1.0)], price=1.05)
+    monkeypatch.setattr(runner.alpaca, "spread_snapshot", lambda s, lng: {"short_delta": 0.45, "short_iv": 0.2})
+    runner.manage_positions()
+    assert len(orders) == 1 and "short delta 0.45 >= 0.40" in closes[0][2]      # SPY scope, not global 0.60
+
+
+def test_current_params_caches_and_keeps_last_good_values_when_the_table_fails(monkeypatch):
+    monkeypatch.setattr(runner, "current_params", runner.__dict__["_current_params_impl"])
+    calls = {"n": 0}
+
+    def load():
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("db down")
+        return {GLOBAL: {"stop_delta": 0.5}}
+
+    monkeypatch.setattr(runner.store, "load_rules", load)
+    assert runner.current_params().get("stop_delta") == 0.5
+    assert runner.current_params().get("stop_delta") == 0.5 and calls["n"] == 1     # cached
+    monkeypatch.setattr(runner, "_PARAMS_TTL", 0.0)
+    assert runner.current_params().get("stop_delta") == 0.5 and calls["n"] == 2     # failed load -> last good

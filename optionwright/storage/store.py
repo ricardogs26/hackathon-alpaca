@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 from optionwright.options.models import Direction, VerticalSpread
 from optionwright.policy.gates import PolicyState
+from optionwright.policy.params import GLOBAL, REGISTRY, validate_scope
 from optionwright.settings import get_settings
 from optionwright.storage.schema import SCHEMA
 
@@ -118,6 +119,68 @@ def get_ticks(position_id: int, limit: int = 2000) -> list[dict]:
     with _conn() as c:
         cur = c.execute(
             "SELECT * FROM position_ticks WHERE position_id=%s ORDER BY ts LIMIT %s", (position_id, limit)
+        )
+        rows = _rows(cur)
+    return [{**r, "ts": r["ts"].isoformat()} for r in rows]
+
+
+# ── rule parameters (phase 1) ─────────────────────────────────────────────────
+def seed_rules(seed: dict[str, object]) -> int:
+    """Insert global values that don't exist yet. Idempotent: the environment
+    is a seed, editing it later does nothing once the row exists."""
+    n = 0
+    with _conn() as c:
+        for key, value in seed.items():
+            if key not in REGISTRY:
+                continue
+            cur = c.execute(
+                "INSERT INTO rules (scope, key, value) VALUES (%s, %s, %s) ON CONFLICT (scope, key) DO NOTHING",
+                (GLOBAL, key, str(value)),
+            )
+            n += cur.rowcount
+    if n:
+        logger.info("seeded %d rule parameter(s) from the environment", n)
+    return n
+
+
+def load_rules() -> dict[str, dict[str, str]]:
+    """{scope: {key: raw value}} — the Params constructor's input."""
+    out: dict[str, dict[str, str]] = {}
+    with _conn() as c:
+        for scope, key, value in c.execute("SELECT scope, key, value FROM rules").fetchall():
+            out.setdefault(scope, {})[key] = value
+    return out
+
+
+def set_rule(scope: str, key: str, value, changed_by: str, reason: str) -> dict:
+    """Validate against the registry, upsert, and write the history row."""
+    scope = validate_scope(scope)
+    if key not in REGISTRY:
+        raise ValueError(f"unknown rule {key!r}")
+    if not (reason or "").strip():
+        raise ValueError("a reason is required")
+    new = REGISTRY[key].coerce(value)
+    with _conn() as c:
+        row = c.execute("SELECT value FROM rules WHERE scope=%s AND key=%s", (scope, key)).fetchone()
+        old = row[0] if row else None
+        c.execute(
+            "INSERT INTO rules (scope, key, value, updated_at) VALUES (%s, %s, %s, now())"
+            " ON CONFLICT (scope, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()",
+            (scope, key, str(new)),
+        )
+        c.execute(
+            "INSERT INTO rules_history (scope, key, old_value, new_value, changed_by, reason) VALUES (%s,%s,%s,%s,%s,%s)",
+            (scope, key, old, str(new), changed_by, reason.strip()),
+        )
+    logger.info("rule %s@%s: %s -> %s by %s (%s)", key, scope, old, new, changed_by, reason)
+    return {"scope": scope, "key": key, "old": old, "new": new}
+
+
+def rules_history(limit: int = 50) -> list[dict]:
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT ts, scope, key, old_value, new_value, changed_by, reason FROM rules_history ORDER BY ts DESC LIMIT %s",
+            (limit,),
         )
         rows = _rows(cur)
     return [{**r, "ts": r["ts"].isoformat()} for r in rows]
@@ -249,6 +312,72 @@ def _summarize_book(open_rows: list[dict], pnl_dia: float, consec_losses: int) -
     }
 
 
+def llm_book_view(book: dict) -> dict:
+    """What the LLM sees of the book. Concentration and direction are OUT since
+    phase 1: they are enforced by the gates (direction share, net delta), and a
+    model asked to weigh them sat on a knife edge (abstain 0.40 / bearish 0.80
+    on the same context). The model keeps size, today's P&L and the streak."""
+    return {k: v for k, v in book.items() if k not in ("por_direccion", "concentracion")}
+
+
+def _net_delta_usd(open_rows: list[dict], ticks: dict[int, dict]) -> float | None:
+    """
+    Signed $ delta of the book from the latest tick of each open position:
+    short call spread -> −|delta|·100·contracts·spot, short put spread -> +.
+    None if any open position has no measured delta/spot yet: a partial number
+    would be a lie the gates would act on.
+    """
+    total = 0.0
+    for r in open_rows:
+        t = ticks.get(int(r["id"]))
+        if not t or t.get("short_delta") is None or t.get("spot") is None:
+            return None
+        sign = -1.0 if r["option_right"] == "call" else 1.0
+        total += sign * float(t["short_delta"]) * 100.0 * int(r["contracts"]) * float(t["spot"])
+    return round(total, 2)
+
+
+def latest_ticks(position_ids: list[int]) -> dict[int, dict]:
+    """Latest tick per position id."""
+    if not position_ids:
+        return {}
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT DISTINCT ON (position_id) * FROM position_ticks WHERE position_id = ANY(%s)"
+            " ORDER BY position_id, ts DESC", (list(position_ids),)
+        )
+        rows = _rows(cur)
+    return {int(r["position_id"]): r for r in rows}
+
+
+def book_net_delta_usd() -> float | None:
+    with _conn() as c:
+        open_rows = _rows(c.execute("SELECT id, option_right, contracts FROM positions WHERE status='open'"))
+    return _net_delta_usd(open_rows, latest_ticks([r["id"] for r in open_rows]))
+
+
+def open_position_states() -> list[dict]:
+    """Open positions with their latest tick (the dashboard's state panel)."""
+    with _conn() as c:
+        open_rows = _rows(c.execute(
+            "SELECT id, underlying, option_right, short_symbol, long_symbol, contracts, credit, expiry, ts_open"
+            " FROM positions WHERE status='open' ORDER BY id"))
+    ticks = latest_ticks([r["id"] for r in open_rows])
+    out = []
+    for r in open_rows:
+        t = ticks.get(int(r["id"]), {})
+        out.append({
+            **r, "ts_open": r["ts_open"].isoformat(), "expiry": str(r["expiry"]),
+            "tick_ts": t["ts"].isoformat() if t.get("ts") else None,
+            "spot": t.get("spot"), "price": t.get("price"), "captured": t.get("captured"),
+            "peak_captured": t.get("peak_captured"), "pnl_now": t.get("pnl_now"),
+            "short_delta": t.get("short_delta"), "short_iv": t.get("short_iv"), "sigma_dist": t.get("sigma_dist"),
+            "hours_to_expiry": t.get("hours_to_expiry"), "hours_to_close": t.get("hours_to_close"),
+            "sleeps_tonight": t.get("sleeps_tonight"), "decision": t.get("decision"), "reason": t.get("reason"),
+        })
+    return out
+
+
 def recent_outcomes(underlying: str, limit: int = 5) -> dict:
     """Resumen de los últimos `limit` trades cerrados del subyacente."""
     with _conn() as c:
@@ -286,9 +415,15 @@ def build_policy_state(
     *,
     minutes_since_open: float | None = None,
     minutes_to_macro: float | None = None,
+    minutes_to_close: float | None = None,
 ) -> PolicyState:
     """Read the live risk state for one underlying from Postgres."""
     with _conn() as c:
+        open_rows = _rows(c.execute(
+            "SELECT id, option_right, contracts, max_loss FROM positions WHERE status='open'"))
+        realized_today = c.execute(
+            "SELECT coalesce(sum(realized_pnl),0) FROM positions WHERE status='closed' AND ts_close::date = now()::date"
+        ).fetchone()[0]
         open_positions = c.execute("SELECT count(*) FROM positions WHERE status='open'").fetchone()[0]
         open_underlying = c.execute(
             "SELECT count(*) FROM positions WHERE status='open' AND underlying=%s", (underlying,)
@@ -307,6 +442,11 @@ def build_policy_state(
             "SELECT short_symbol, long_symbol FROM positions WHERE status='open'"
         ).fetchall()
     open_signatures = frozenset(f"{r[0]}|{r[1]}" for r in sig_rows)
+    risk_by_direction: dict[str, float] = {}
+    for r in open_rows:
+        side = "bearish" if r["option_right"] == "call" else "bullish"
+        risk_by_direction[side] = risk_by_direction.get(side, 0.0) + float(r["max_loss"] or 0.0)
+    net_delta = _net_delta_usd(open_rows, latest_ticks([r["id"] for r in open_rows]))
     return PolicyState(
         equity=equity,
         open_positions=int(open_positions),
@@ -317,4 +457,8 @@ def build_policy_state(
         minutes_since_open=minutes_since_open,
         minutes_to_macro=minutes_to_macro,
         open_signatures=open_signatures,
+        risk_by_direction=risk_by_direction,
+        net_delta_usd=net_delta,
+        minutes_to_close=minutes_to_close,
+        realized_pnl_today=float(realized_today),
     )

@@ -1,62 +1,110 @@
-"""
-Tests for the exit decision (trailing take-profit + stop + hard cap + expiry).
-Credit-spread P&L is (credit - current_price) / credit = captured fraction.
-"""
+"""Exit rules by state (phase 1). Pure: no network, no DB."""
 from __future__ import annotations
 
-from optionwright.agent.exits import ExitParams, decide_exit
+from optionwright.agent.exits import ExitParams, decide_exit, take_profit_threshold
+from optionwright.policy.params import GLOBAL, Params
 
-CREDIT = 1.00  # $1.00 per share
+P = ExitParams()   # registry defaults: stop delta 0.45 / 1.0x, TP 50%/25% @24h, trail 30/7, flat @30min
 
 
+# ── 1 expiry ─────────────────────────────────────────────────────────────────
 def test_expiration_forces_close_even_when_profitable():
-    d = decide_exit(CREDIT, current_price=0.10, is_expiry_day=True)
+    d = decide_exit(1.0, 0.2, True, params=P)
     assert d.close and "expiration" in d.reason
 
 
-def test_stop_loss_at_two_x_credit():
-    # current 3.00 -> loss 2.00 = 2x credit -> close
-    d = decide_exit(CREDIT, current_price=3.00, is_expiry_day=False)
+# ── 2/3 stops ────────────────────────────────────────────────────────────────
+def test_stop_by_delta_fires_before_any_credit_multiple():
+    # price barely above credit (loss 0.1x) but the short leg is at 0.47 delta
+    d = decide_exit(1.0, 1.10, False, params=P, short_delta=0.47)
+    assert d.close and "short delta 0.47" in d.reason
+
+
+def test_stop_by_delta_needs_the_snapshot_else_credit_stop_protects():
+    assert not decide_exit(1.0, 1.50, False, params=P, short_delta=None).close     # 0.5x, no delta: hold
+    d = decide_exit(1.0, 2.00, False, params=P, short_delta=None)                   # 1.0x: credit stop
+    assert d.close and "stop-loss (1.0x credit)" in d.reason
+
+
+def test_credit_stop_caps_the_loss_even_with_a_calm_delta():
+    d = decide_exit(1.0, 2.05, False, params=P, short_delta=0.30)
     assert d.close and "stop-loss" in d.reason
 
 
-def test_hard_take_profit_ceiling_at_60():
-    # captured 60% (buy back at 0.40) -> hard cap closes it
-    d = decide_exit(CREDIT, current_price=0.40, is_expiry_day=False, peak_captured=0.60)
-    assert d.close and "take-profit" in d.reason
+def test_thursday_positions_would_have_stopped_at_the_delta_not_at_2x():
+    # 3-Sep 08:18: #18 QQQ credit 1.125, price 1.725 (0.53x loss), short 714 with spot 712.5 (~0.45 delta)
+    d = decide_exit(1.125, 1.725, False, params=P, short_delta=0.45)
+    assert d.close and "short delta" in d.reason
 
 
+# ── 4 take-profit by time ────────────────────────────────────────────────────
+def test_take_profit_threshold_steps_at_24h():
+    assert take_profit_threshold(P, None) == 0.50
+    assert take_profit_threshold(P, 30.0) == 0.50
+    assert take_profit_threshold(P, 24.0) == 0.25
+    assert take_profit_threshold(P, 3.0) == 0.25
+
+
+def test_take_profit_far_holds_at_40_closes_at_50():
+    assert not decide_exit(1.0, 0.60, False, params=P, hours_to_expiry=48).close
+    d = decide_exit(1.0, 0.50, False, params=P, hours_to_expiry=48)
+    assert d.close and "threshold 50%" in d.reason
+
+
+def test_take_profit_near_banks_25_in_the_last_hours():
+    d = decide_exit(1.0, 0.74, False, params=P, hours_to_expiry=5)
+    assert d.close and "threshold 25%" in d.reason
+
+
+# ── 5 trailing ───────────────────────────────────────────────────────────────
 def test_trailing_closes_on_pullback_from_peak():
-    # peaked at 30%, now back to 19% (30% - 10% floor = 20%; 19% < 20%) -> close
-    d = decide_exit(CREDIT, current_price=0.81, is_expiry_day=False, peak_captured=0.30)
+    d = decide_exit(1.0, 0.78, False, peak_captured=0.34, params=P, hours_to_expiry=48)   # 22% now, peak 34
     assert d.close and "trailing" in d.reason
 
 
-def test_trailing_holds_above_the_floor():
-    # peaked 30%, now 22% (still above the 20% floor) -> hold
-    d = decide_exit(CREDIT, current_price=0.78, is_expiry_day=False, peak_captured=0.30)
-    assert not d.close
+def test_trailing_holds_above_the_floor_and_not_armed_below_activation():
+    assert not decide_exit(1.0, 0.72, False, peak_captured=0.34, params=P, hours_to_expiry=48).close  # 28% > 27
+    assert not decide_exit(1.0, 0.85, False, peak_captured=0.25, params=P, hours_to_expiry=48).close  # not armed
 
 
-def test_trailing_not_armed_below_activation():
-    # peaked only 15% (below 20% activation), fell to a loss -> trailing inactive, hold
-    d = decide_exit(CREDIT, current_price=1.10, is_expiry_day=False, peak_captured=0.15)
-    assert not d.close
+# ── 6 overnight ──────────────────────────────────────────────────────────────
+def test_flat_mode_closes_a_sleeper_in_the_last_30_minutes():
+    d = decide_exit(1.0, 0.95, False, params=P, hours_to_close=0.4, sleeps_tonight=True, short_delta=0.20)
+    assert d.close and "overnight flatten" in d.reason
 
 
-def test_todays_scenario_peak_27_reverses_exits_green():
-    # peaked 27%, reverses toward a loss: floor = 27% - 10% = 17%; at 16% -> close in the green
-    d = decide_exit(CREDIT, current_price=0.84, is_expiry_day=False, peak_captured=0.27)
-    assert d.close and "trailing" in d.reason
+def test_flat_mode_leaves_it_alone_earlier_in_the_day_or_if_it_expires_today():
+    assert not decide_exit(1.0, 0.95, False, params=P, hours_to_close=2.0, sleeps_tonight=True).close
+    assert not decide_exit(1.0, 0.95, False, params=P, hours_to_close=0.4, sleeps_tonight=False).close
+    assert not decide_exit(1.0, 0.95, False, params=P, hours_to_close=None, sleeps_tonight=True).close
 
 
-def test_fresh_winner_still_climbing_holds():
-    # captured 40%, peak 40% (no pullback) -> below hard cap, no pullback -> hold and let it run
-    d = decide_exit(CREDIT, current_price=0.60, is_expiry_day=False, peak_captured=0.40)
-    assert not d.close
+def test_delta_mode_lets_a_small_leg_in_a_balanced_book_sleep():
+    p = ExitParams(overnight_mode="delta")
+    ok = decide_exit(1.0, 0.95, False, params=p, hours_to_close=0.4, sleeps_tonight=True,
+                     short_delta=0.20, book_net_delta_pct=0.01)
+    assert not ok.close
 
 
-def test_custom_params():
-    p = ExitParams(trail_activation=0.15, trail_giveback=0.05, hard_take_profit=0.5)
-    # peaked 20%, now 14% (floor 15%) -> close under stricter trail
-    assert decide_exit(CREDIT, 0.86, False, peak_captured=0.20, params=p).close
+def test_delta_mode_closes_when_the_leg_is_big_the_book_is_tilted_or_either_is_unknown():
+    p = ExitParams(overnight_mode="delta")
+    big = decide_exit(1.0, 0.95, False, params=p, hours_to_close=0.4, sleeps_tonight=True, short_delta=0.40, book_net_delta_pct=0.01)
+    tilted = decide_exit(1.0, 0.95, False, params=p, hours_to_close=0.4, sleeps_tonight=True, short_delta=0.20, book_net_delta_pct=0.05)
+    unknown = decide_exit(1.0, 0.95, False, params=p, hours_to_close=0.4, sleeps_tonight=True, short_delta=None, book_net_delta_pct=0.01)
+    assert big.close and "short delta 0.40" in big.reason
+    assert tilted.close and "net delta 5.0%" in tilted.reason
+    assert unknown.close and "unknown" in unknown.reason
+
+
+def test_winners_close_with_their_own_reason_before_the_overnight_rule():
+    d = decide_exit(1.0, 0.45, False, params=P, hours_to_expiry=48, hours_to_close=0.3, sleeps_tonight=True)
+    assert "take-profit" in d.reason
+
+
+# ── params from the table ────────────────────────────────────────────────────
+def test_exit_params_from_params_respects_scopes():
+    prm = Params({GLOBAL: {"stop_delta": 0.40, "overnight_mode": "delta"}, "underlying:QQQ": {"stop_delta": 0.50}})
+    assert ExitParams.from_params(prm).stop_delta == 0.40
+    assert ExitParams.from_params(prm, underlying="QQQ").stop_delta == 0.50
+    assert ExitParams.from_params(prm).overnight_mode == "delta"
+    assert ExitParams.from_params(prm).take_profit_far == 0.50    # default flows through
