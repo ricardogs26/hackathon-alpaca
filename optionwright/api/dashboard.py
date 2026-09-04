@@ -331,8 +331,6 @@ function renderState(rows){
       `<td>${r.decision||'—'}${r.reason?' · '+r.reason:''}</td></tr>`).join('')+'</table></div>';
 }
 
-</div></div>`;
-}
 
 let _decisions = [];
 let _allPos = [];

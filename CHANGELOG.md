@@ -5,6 +5,11 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.5.2 — 2026-09-04
+
+- Dashboard: fix a stray fragment left by the 0.5.1 panel removal that broke
+  the page script (everything showed "connecting…").
+
 ## 0.5.1 — 2026-09-04
 
 - Dashboard: the "Rules" panel is removed — a wall of parameters on the
