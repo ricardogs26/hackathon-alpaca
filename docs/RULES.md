@@ -51,7 +51,8 @@ unknown means the gate is skipped, never that it invents a number.
 |---------------------|--------------|
 | `short_delta` (0.30) / `short_delta_volatile` (0.20) | target \|delta\| of the short leg; farther from the money when the regime is volatile |
 | `volatile_mode` (neutral) | in a volatile regime: `neutral` = only iron condors, `none` = no entries, `directional` = no restriction |
-| `intraday_trend_pct` (0.25) / `intraday_vol_high_pct` (1.2) | perception: the 30-minute move that reads as a trend, and the intraday realized vol (daily-equivalent %) above which the regime is volatile |
+| `trend_flat_pct` (1.0) / `vol_high_pct` (1.2) | perception, daily: the 5-day move below which the trend is lateral, and the daily realized vol above which the regime is volatile — **per group** (megacaps 3.5: they move ~3x the indexes on a normal day) |
+| `intraday_trend_pct` (0.25) / `intraday_vol_high_pct` (1.2) | perception, intraday: the 30-minute move that reads as a trend, and the intraday realized vol (daily-equivalent %) above which the regime is volatile — per group as well |
 | `width_pct` (0.0065) | spread width as a fraction of spot, snapped to the chain's strike step: SPY 770 → 5, IWM 295 → 2, AAPL 320 → 2.5 |
 | `width_tolerance` (0.5) | the long leg must sit within this fraction of the width from the target, otherwise no spread (never a silent 10-wide) |
 | `min_open_interest` (100) / `max_quote_spread_pct` (0.15) | a leg is liquid only with this much open interest and a bid-ask no wider than 15 % of the mid |

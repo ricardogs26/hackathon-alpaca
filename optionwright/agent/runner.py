@@ -277,15 +277,14 @@ def _signals(underlying: str, params: Params, group: str | None) -> dict:
     """Daily perception (5-day trend, SMAs, regime) merged with today's intraday
     read (VWAP, 30-min trend, intraday vol). The intraday part degrades to {}
     on any hiccup — the daily view still reaches the model."""
-    s = get_settings()
+    g = lambda k: params.get(k, underlying, group)  # noqa: E731
     spot = alpaca.get_spot(underlying)
     daily = perception.compute_signals(alpaca.recent_bars(underlying), spot,
-                                       trend_flat_pct=s.perception_trend_flat_pct, vol_high_pct=s.perception_vol_high_pct)
+                                       trend_flat_pct=g("trend_flat_pct"), vol_high_pct=g("vol_high_pct"))
     try:
         intraday = perception.compute_intraday(
             alpaca.intraday_bars(underlying), spot,
-            trend_pct=params.get("intraday_trend_pct", underlying, group),
-            vol_high_pct=params.get("intraday_vol_high_pct", underlying, group))
+            trend_pct=g("intraday_trend_pct"), vol_high_pct=g("intraday_vol_high_pct"))
     except Exception as exc:
         logger.warning("intraday perception for %s unavailable: %s", underlying, exc)
         intraday = {}

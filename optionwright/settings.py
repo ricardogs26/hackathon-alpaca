@@ -104,8 +104,9 @@ class Settings(BaseSettings):
 
     # Contexto agéntico: percepción + memoria + portafolio inyectados al LLM
     agent_rich_context: bool = Field(default=True, alias="AGENT_RICH_CONTEXT")
-    perception_trend_flat_pct: float = Field(default=1.0, alias="PERCEPTION_TREND_FLAT_PCT")
-    perception_vol_high_pct: float = Field(default=1.2, alias="PERCEPTION_VOL_HIGH_PCT")
+    # perception thresholds — seeds for the rules table (per-group values live there)
+    trend_flat_pct: float = Field(default=1.0, alias="PERCEPTION_TREND_FLAT_PCT")
+    vol_high_pct: float = Field(default=1.2, alias="PERCEPTION_VOL_HIGH_PCT")
 
     model_config = {
         "env_file": ".env",

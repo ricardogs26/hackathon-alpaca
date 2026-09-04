@@ -83,6 +83,8 @@ _SPECS = [
     ParamSpec("short_delta", "float", 0.30, "Target |delta| of the short leg", 0.05, 0.50, section="selection"),
     ParamSpec("short_delta_volatile", "float", 0.20, "Target |delta| of the short leg when the regime is volatile (farther from the money)", 0.05, 0.50, section="selection"),
     ParamSpec("volatile_mode", "str", "neutral", "In a volatile regime: neutral = only iron condors; none = no entries; directional = no restriction", choices=("neutral", "none", "directional"), section="selection"),
+    ParamSpec("trend_flat_pct", "float", 1.0, "Perception: 5-day move (%) below which the daily trend is lateral", 0.01, 20.0, section="perception"),
+    ParamSpec("vol_high_pct", "float", 1.2, "Perception: daily realized vol (%) above which the regime is volatile — set per group: megacaps move ~3x the indexes on a normal day", 0.1, 20.0, section="perception"),
     ParamSpec("intraday_trend_pct", "float", 0.25, "Perception: 30-minute move (%) that reads as an intraday trend", 0.01, 5.0, section="perception"),
     ParamSpec("intraday_vol_high_pct", "float", 1.2, "Perception: intraday realized vol (daily-equivalent %) above which the regime is volatile", 0.1, 20.0, section="perception"),
     ParamSpec("width_pct", "float", 0.0065, "Spread width as a fraction of spot (SPY 770 -> 5, IWM 295 -> 2), rounded to the strike step", 0.001, 0.05, section="selection"),

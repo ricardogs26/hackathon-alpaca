@@ -27,7 +27,13 @@ tag is `v<version>`.
   scales with today's realized vol against the reference, clamped 0.5x-2x —
   7 points on a normal day, 14 when the underlying moves twice as much,
   3.5 when it sleeps. 0 restores fixed points.
-- 16 new tests (189 total).
+- **Perception thresholds join the rules table** (`trend_flat_pct`,
+  `vol_high_pct`, `intraday_*`), so they can differ per group: the live read
+  of 4-Sep showed NVDA at 2.3 % intraday / 2.7 % daily vol and TSLA at 2.9 /
+  3.5 % on an ordinary day — with the index threshold of 1.2 % the megacaps
+  would be "volatile" every day and never trade a direction. The megacap
+  group gets 3.5 % (set in the table, with its reason in `rules_history`).
+- 17 new tests (190 total).
 
 ## 0.6.1 — 2026-09-04
 

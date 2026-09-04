@@ -6,8 +6,8 @@ from optionwright.settings import Settings
 def test_rich_context_defaults_on():
     s = Settings(_env_file=None)
     assert s.agent_rich_context is True
-    assert s.perception_trend_flat_pct == 1.0
-    assert s.perception_vol_high_pct == 1.2
+    assert s.trend_flat_pct == 1.0
+    assert s.vol_high_pct == 1.2
 
 
 def test_rich_context_off_via_env(monkeypatch):

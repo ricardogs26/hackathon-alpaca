@@ -46,7 +46,7 @@ def _settings(**over):
 
     base = dict(underlyings_list=["SPY", "QQQ", "IWM"], universe=flat_universe(["SPY", "QQQ", "IWM"]),
                 chain_prefetch_workers=3, cycle_seconds=180, exit_check_seconds=60,
-                perception_trend_flat_pct=1.0, perception_vol_high_pct=1.2)
+                trend_flat_pct=1.0, vol_high_pct=1.2)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -425,8 +425,8 @@ def test_build_deps_resolves_rules_and_selection_by_group(monkeypatch):
 
     uni = parse_groups("index:SPY,QQQ,IWM;megacap:AAPL")
     monkeypatch.setattr(runner, "get_settings", lambda: SimpleNamespace(
-        universe=uni, expiry_min_days=2, expiry_max_days=3, perception_trend_flat_pct=1.0,
-        perception_vol_high_pct=1.2, agent_rich_context=True))
+        universe=uni, expiry_min_days=2, expiry_max_days=3, trend_flat_pct=1.0,
+        vol_high_pct=1.2, agent_rich_context=True))
     prm = Params({"group:megacap": {"max_per_group": 1, "short_delta": 0.25}})
     d_spy, d_aapl = runner._build_deps(prm, "SPY"), runner._build_deps(prm, "AAPL")
     assert d_spy.rules.max_per_group == 2 and d_aapl.rules.max_per_group == 1
@@ -460,3 +460,12 @@ def test_signals_merge_daily_and_intraday_and_survive_an_intraday_failure(monkey
     monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: (_ for _ in ()).throw(RuntimeError("feed down")))
     sig2 = runner._signals("SPY", Params(), "index")
     assert "tendencia_5d" in sig2 and "vwap" not in sig2
+
+
+def test_signals_thresholds_come_from_the_table_per_group(monkeypatch):
+    monkeypatch.setattr(runner.alpaca, "get_spot", lambda u: 100.0)
+    monkeypatch.setattr(runner.alpaca, "recent_bars", lambda u: [100 + (2.0 if i % 2 else -2.0) for i in range(30)])  # ~2% daily vol
+    monkeypatch.setattr(runner.alpaca, "intraday_bars", lambda u: [])
+    prm = Params({"group:megacap": {"vol_high_pct": 3.5}})
+    assert runner._signals("SPY", prm, "index")["regimen"] == "volatil"       # global 1.2
+    assert runner._signals("NVDA", prm, "megacap")["regimen"] == "tranquilo"  # megacap 3.5
