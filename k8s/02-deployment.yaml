@@ -115,6 +115,8 @@ spec:
               value: "2700"
             - name: MAX_CONSECUTIVE_LOSSES
               value: "3"
+            - name: BREAKER_LOOKBACK_HOURS
+              value: "24"
             - name: MAX_DAILY_LOSS_PCT
               value: "0.02"
             - name: OPENING_BLACKOUT_MINUTES

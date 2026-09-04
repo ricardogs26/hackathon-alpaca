@@ -200,3 +200,8 @@ def test_ruleset_from_params_carries_group_rules():
     prm = Params({"group:index": {"max_per_group": 1}})
     assert RuleSet.from_params(prm, underlying="SPY", group="index").max_per_group == 1
     assert RuleSet.from_params(prm).max_per_group == 2
+
+
+def test_ruleset_carries_the_breaker_window():
+    assert RuleSet.from_params(Params({GLOBAL: {"breaker_lookback_hours": 6}})).breaker_lookback_hours == 6.0
+    assert RuleSet().breaker_lookback_hours == 24.0

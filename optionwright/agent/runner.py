@@ -278,6 +278,7 @@ def _build_deps(params: Params, underlying: str) -> Deps:
     s = get_settings()
     group = s.universe.group_of(underlying)
     peers = list(s.universe.peers(underlying))
+    rules = RuleSet.from_params(params, underlying, group)
     return Deps(
         account=_account,
         nearest_expiry=lambda u: alpaca.nearest_expiry(u, min_days=s.expiry_min_days, max_days=s.expiry_max_days),
@@ -285,12 +286,12 @@ def _build_deps(params: Params, underlying: str) -> Deps:
         propose=propose,
         build_state=lambda u, eq: store.build_policy_state(
             u, eq, minutes_since_open=_minutes_since_open(), minutes_to_close=_minutes_to_close(),
-            group_symbols=peers),
+            group_symbols=peers, lookback_hours=rules.breaker_lookback_hours),
         submit_spread=alpaca.submit_spread,
         record_decision=store.record_decision,
         record_position=store.record_position,
         save_equity=store.save_equity,
-        rules=RuleSet.from_params(params, underlying, group),
+        rules=rules,
         select=SelectParams.from_params(params, underlying, group),
         spot=alpaca.get_spot,
         signals=lambda u, e: perception.compute_signals(
@@ -299,7 +300,7 @@ def _build_deps(params: Params, underlying: str) -> Deps:
             vol_high_pct=s.perception_vol_high_pct,
         ),
         memory=lambda u: store.recent_outcomes(u),
-        book=lambda: store.llm_book_view(store.book_summary()),
+        book=lambda: store.llm_book_view(store.book_summary(rules.breaker_lookback_hours)),
         rich_context=s.agent_rich_context,
     )
 

@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     daily_budget_pct: float = Field(default=0.05, alias="DAILY_BUDGET_PCT")
     cooldown_seconds: float = Field(default=2700.0, alias="COOLDOWN_SECONDS")
     max_consecutive_losses: int = Field(default=3, alias="MAX_CONSECUTIVE_LOSSES")
+    breaker_lookback_hours: float = Field(default=24.0, alias="BREAKER_LOOKBACK_HOURS")
     max_daily_loss_pct: float = Field(default=0.02, alias="MAX_DAILY_LOSS_PCT")
     opening_blackout_minutes: float = Field(default=30.0, alias="OPENING_BLACKOUT_MINUTES")
     no_entry_minutes_before_close: float = Field(default=60.0, alias="NO_ENTRY_MINUTES_BEFORE_CLOSE")

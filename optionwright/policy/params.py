@@ -74,6 +74,7 @@ _SPECS = [
     ParamSpec("min_confidence", "float", 0.60, "Minimum LLM confidence to open", 0.0, 1.0),
     ParamSpec("cooldown_seconds", "float", 2700.0, "Re-entry cooldown per underlying, seconds", 0.0, 86400.0),
     ParamSpec("max_consecutive_losses", "int", 3, "Losing trades in a row that pause trading", 1, 20),
+    ParamSpec("breaker_lookback_hours", "float", 24.0, "The losing streak only counts trades closed within this many hours; without a window a streak could never end", 1.0, 720.0),
     ParamSpec("max_daily_loss_pct", "float", 0.02, "Realized loss today (fraction of equity) that pauses new entries", 0.001, 0.50),
     ParamSpec("opening_blackout_minutes", "float", 30.0, "No entries this long after the open", 0.0, 240.0),
     ParamSpec("no_entry_minutes_before_close", "float", 60.0, "No entries this close to the close", 0.0, 240.0),

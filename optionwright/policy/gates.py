@@ -39,6 +39,7 @@ class RuleSet:
     no_entry_minutes_before_close: float = 60.0
     max_per_group: int = 2
     group_cooldown_seconds: float = 1800.0
+    breaker_lookback_hours: float = 24.0
 
     @classmethod
     def from_params(cls, params, underlying: str | None = None, group: str | None = None) -> "RuleSet":
@@ -52,6 +53,7 @@ class RuleSet:
             max_net_delta_pct=g("max_net_delta_pct"), min_reward_risk=g("min_reward_risk"),
             max_daily_loss_pct=g("max_daily_loss_pct"), no_entry_minutes_before_close=g("no_entry_minutes_before_close"),
             max_per_group=g("max_per_group"), group_cooldown_seconds=g("group_cooldown_seconds"),
+            breaker_lookback_hours=g("breaker_lookback_hours"),
         )
 
 

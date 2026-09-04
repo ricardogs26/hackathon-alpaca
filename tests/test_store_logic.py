@@ -76,3 +76,19 @@ def test_short_strike_key_from_occ_symbol():
     assert _short_strike_key("spy", "SPY260904C00769000") == "SPY|C|769.0"
     assert _short_strike_key("QQQ", "QQQ260904P00712500") == "QQQ|P|712.5"
     assert _short_strike_key("SPY", "S1") == "SPY|?|S1"
+
+
+# ── breaker window ───────────────────────────────────────────────────────────
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from optionwright.storage.store import _recent_pnls  # noqa: E402
+
+
+def test_recent_pnls_keeps_only_the_window_and_the_streak_ends_with_it():
+    now = datetime(2026, 9, 4, 16, 0, tzinfo=timezone.utc)
+    rows = [(-2465.0, now - timedelta(hours=2)), (-1816.0, now - timedelta(hours=22)),
+            (-1988.0, now - timedelta(hours=22.1)), (-1716.0, now - timedelta(hours=24.6)), (161.0, now - timedelta(hours=25))]
+    assert _consecutive_losses(_recent_pnls(rows, now, 24.0)) == 3      # the 24.6h-old loss is out
+    assert _consecutive_losses(_recent_pnls(rows, now, 1.0)) == 0       # nothing closed in the last hour
+    assert _consecutive_losses(_recent_pnls(rows, now, 100.0)) == 4     # the old behaviour, if wanted
+    assert _recent_pnls([(1.0, None)], now, 24.0) == []

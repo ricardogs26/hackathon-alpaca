@@ -5,6 +5,14 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.6.1 — 2026-09-04
+
+- **The loss breaker gets a window** (`breaker_lookback_hours`, 24). The first
+  0.6.0 pass vetoed all seven symbols with "circuit breaker: 4 consecutive
+  losses" — the streak from 3-Sep — and since nothing could open, no win could
+  ever end it: a permanent pause by construction. The streak now counts only
+  trades closed within the window, so a bad day pauses the rest of that day.
+
 ## 0.6.0 — 2026-09-04 · phase 2: universe and correlation groups
 
 - **Correlation groups.** `UNDERLYING_GROUPS="index:SPY,QQQ,IWM;megacap:AAPL,NVDA,AMZN,TSLA"`

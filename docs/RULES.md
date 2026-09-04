@@ -24,7 +24,7 @@ contracts and the shrinking gates bring it down.
 | # | Gate | Parameter (default) | Vetoes / shrinks when |
 |---|------|---------------------|-----------------------|
 | 0 | Confidence | `min_confidence` (0.60) | the LLM's confidence is below the floor |
-| 1 | Consecutive-loss breaker | `max_consecutive_losses` (3) | this many losing trades in a row |
+| 1 | Consecutive-loss breaker | `max_consecutive_losses` (3) / `breaker_lookback_hours` (24) | this many losing trades in a row among those closed in the last 24 h (without the window a streak could never end: nothing opens, so nothing can win) |
 | 1b | Daily-loss pause | `max_daily_loss_pct` (0.02) | realized loss today ≥ 2 % of equity |
 | 2 | Open-positions cap | `max_open_positions` (6) | that many spreads already open |
 | 2b | Per-underlying cap | `max_per_underlying` (2) | that many open on this symbol |

@@ -267,6 +267,17 @@ def last_opened_confidence() -> float | None:
     return float(row[0]) if row else None
 
 
+def _recent_pnls(rows_desc: list[tuple], now, lookback_hours: float) -> list[float]:
+    """P&Ls of the trades closed within the lookback (rows are (pnl, ts_close),
+    most recent first). Discovered 4-Sep-2026 after 0.6.0: with no window the
+    breaker read 4 straight losses from the 3-Sep and vetoed everything, and
+    since nothing could open, no win could ever end the streak."""
+    from datetime import timedelta
+
+    cutoff = now - timedelta(hours=lookback_hours)
+    return [float(pnl) for pnl, ts in rows_desc if ts is not None and ts >= cutoff]
+
+
 def _consecutive_losses(realized_pnls_desc: list[float]) -> int:
     """Leading run of losing trades (pnl < 0) from most-recent backwards."""
     n = 0
@@ -390,8 +401,14 @@ def recent_outcomes(underlying: str, limit: int = 5) -> dict:
     return _summarize_outcomes(rows)
 
 
-def book_summary() -> dict:
-    """Resumen del libro abierto + P&L del día + racha de pérdidas."""
+def _now():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+def book_summary(lookback_hours: float = 24.0) -> dict:
+    """Resumen del libro abierto + P&L del día + racha de pérdidas (dentro de la ventana)."""
     with _conn() as c:
         open_cur = c.execute(
             "SELECT underlying, option_right FROM positions WHERE status='open'"
@@ -402,10 +419,10 @@ def book_summary() -> dict:
             " WHERE status='closed' AND ts_close::date = now()::date"
         ).fetchone()[0]
         pnls = c.execute(
-            "SELECT realized_pnl FROM positions WHERE status='closed'"
+            "SELECT realized_pnl, ts_close FROM positions WHERE status='closed'"
             " ORDER BY ts_close DESC LIMIT 20"
         ).fetchall()
-    consec = _consecutive_losses([p[0] for p in pnls])
+    consec = _consecutive_losses(_recent_pnls(pnls, _now(), lookback_hours))
     return _summarize_book(open_rows, float(pnl_dia), consec)
 
 
@@ -417,6 +434,7 @@ def build_policy_state(
     minutes_to_macro: float | None = None,
     minutes_to_close: float | None = None,
     group_symbols: list[str] | None = None,
+    lookback_hours: float = 24.0,
 ) -> PolicyState:
     """Read the live risk state for one underlying from Postgres. `group_symbols`
     are the peers in its correlation group (the symbol included)."""
@@ -442,7 +460,7 @@ def build_policy_state(
             (underlying,),
         ).fetchone()
         pnls = c.execute(
-            "SELECT realized_pnl FROM positions WHERE status='closed' ORDER BY ts_close DESC LIMIT 20"
+            "SELECT realized_pnl, ts_close FROM positions WHERE status='closed' ORDER BY ts_close DESC LIMIT 20"
         ).fetchall()
         sig_rows = c.execute(
             "SELECT short_symbol, long_symbol FROM positions WHERE status='open'"
@@ -458,7 +476,7 @@ def build_policy_state(
     return PolicyState(
         equity=equity,
         open_positions=int(open_positions),
-        consecutive_losses=_consecutive_losses([p[0] for p in pnls]),
+        consecutive_losses=_consecutive_losses(_recent_pnls(pnls, _now(), lookback_hours)),
         premium_at_risk_today=float(at_risk),
         open_positions_underlying=int(open_underlying),
         seconds_since_symbol_trade=float(last[0]) if last else None,
