@@ -5,6 +5,11 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.8.1 — 2026-09-04
+
+- `python -m optionwright.learning` works as documented (the module lives in
+  `agent/learning.py`; a shim now exposes it at the package root, like `replay`).
+
 ## 0.8.0 — 2026-09-04 · phase 4: statistical memory
 
 - **Nightly memory** (`agent/learning.py`, cron `LEARNING_CRON_UTC`, default
