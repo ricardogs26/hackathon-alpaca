@@ -29,3 +29,14 @@ def test_list_proposals_is_public_but_decisions_need_the_token(monkeypatch):
         assert r.status_code == 200 and decided == [(1, True, "ricardo")]
         assert c.post("/api/rules/proposals/1/reject", headers={"Authorization": "Bearer secret"}).status_code == 200
         assert c.post("/api/rules/proposals/1/maybe", headers={"Authorization": "Bearer secret"}).status_code == 404
+
+
+def test_reconcile_endpoint_reports_mismatches_read_only(monkeypatch):
+    c, _ = _client(monkeypatch, token="")
+    monkeypatch.setattr(store, "live_legs_rows", lambda: [{"status": "open", "contracts": 1, "short_symbol": "S", "long_symbol": "L"}])
+    from optionwright.broker import alpaca
+    monkeypatch.setattr(alpaca, "broker_option_positions", lambda: {"S": -1})
+    with c:
+        r = c.get("/api/reconcile").json()
+        assert r["ok"] is False and r["mismatches"] == [{"symbol": "L", "db": 1, "broker": 0}]
+        assert "reconciled" in c.get("/api/status").json()

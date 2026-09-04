@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-218%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-224%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
 [Live dashboard](https://optionwright.richardx.dev) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
@@ -219,7 +219,7 @@ optionwright/
   storage/    Postgres schema + reads (orders, equity, decisions)
   api/        FastAPI: read-only endpoints, the rules API + the live dashboard
   replay.py   the exit rules over recorded ticks, simulated vs actual
-tests/        218 tests over the deterministic core
+tests/        224 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -238,12 +238,16 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
   (delta, σ distance, time left, what the rules say), open and closed spreads, and the decision log (the reason and gate verdict behind
   every cycle).
 - **Grafana** dashboard under [`k8s/grafana`](k8s/grafana).
+- **Heartbeat** CronJob (`k8s/05-heartbeat-cronjob.yaml`): every 10 minutes in
+  market hours a separate pod checks that the agent answers and cycled in the
+  last 15 minutes, and sends WhatsApp if not. `GET /api/reconcile` shows the
+  DB book against the broker's.
 
 ## Tests
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 218 tests, no network or account needed
+pytest -q          # 224 tests, no network or account needed
 ```
 
 The deterministic core (spread selection, the risk gates, exit decisions, market

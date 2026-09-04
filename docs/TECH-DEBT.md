@@ -51,7 +51,7 @@ Reviewed on the code as deployed (phases 0-4 done in one day). Criticality:
 | 5.7 | `logging.basicConfig` at import in `api/main.py`; Spanish/English mix in identifiers and docstrings; stale `scripts/` (SPY-only probes) | L | Hygiene |
 | 5.8 | `CHANGELOG` grew 9 versions in one day; tag `v0.2.1`…`v0.8.1` and `main` not pushed | L | Remote does not have the week's work |
 
-## 6 · Operations
+## 6 · Operations — **6.1 and 6.3 done in 0.9.1 (2026-09-04)**
 | # | Activity | Crit | Resolves |
 |---|----------|------|----------|
 | 6.1 | `RULES_TOKEN` missing from the Secret: no proposal can be approved, no rule edited over the API | A | The human gate of phase 4 is closed |

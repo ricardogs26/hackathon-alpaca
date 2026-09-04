@@ -108,6 +108,9 @@ class Settings(BaseSettings):
     close_limit_step: float = Field(default=0.05, alias="CLOSE_LIMIT_STEP")            # limit = price + step × (attempts + 1)
     close_limit_max_steps: int = Field(default=6, alias="CLOSE_LIMIT_MAX_STEPS")
     reconcile_alert_minutes: float = Field(default=30.0, alias="RECONCILE_ALERT_MINUTES")  # WhatsApp at most this often
+    # ── External heartbeat (tech-debt 6.3): the CronJob's targets ─────────────
+    heartbeat_status_url: str = Field(default="http://optionwright-service:8080/api/status", alias="HEARTBEAT_STATUS_URL")
+    heartbeat_prometheus_url: str = Field(default="http://kube-prometheus-stack-prometheus.observability:9090", alias="HEARTBEAT_PROMETHEUS_URL")
     # ── Phase 4: nightly statistical memory ──────────────────────────────────
     learning_cron_utc: str = Field(default="30 22 * * 1-5", alias="LEARNING_CRON_UTC")   # 17:30 CST, weekdays; "" = off
     whatsapp_send_url: str = Field(default="", alias="WHATSAPP_SEND_URL")   # Amael bridge, e.g. http://whatsapp-bridge-service.amael-ia:3000

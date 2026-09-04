@@ -5,6 +5,20 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.9.1 — 2026-09-04 · tech-debt 6.1 and 6.3
+
+- **External heartbeat** (`agent/heartbeat.py`, CronJob
+  `k8s/05-heartbeat-cronjob.yaml`, every 10 min in market hours): a separate
+  pod asks `/api/status` and Prometheus whether the agent cycled in the last
+  15 minutes; if the API is down, the scheduler stopped, or the market is open
+  with zero cycles, it sends WhatsApp. A hung scheduler cannot report itself
+  and the cluster watchdog only checks replicas.
+- `GET /api/reconcile`: the DB book against the broker's, leg by leg, with
+  what is blocking entries and how it clears; `/api/status` carries
+  `reconciled`.
+- `RULES_TOKEN` now lives in the Secret (6.1): proposals can be approved and
+  rules edited over the API.
+
 ## 0.9.0 — 2026-09-04 · order lifecycle and reconciliation (tech-debt 1.1, 1.2, 1.3)
 
 - **Orders are followed to their end.** Entry: submit, wait up to

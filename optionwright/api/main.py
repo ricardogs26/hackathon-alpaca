@@ -117,6 +117,7 @@ def status() -> dict:
         "next_close": clock["next_close"],
         "cycle_seconds": s.cycle_seconds,
         "exit_check_seconds": s.exit_check_seconds,
+        "reconciled": _reconciled(),
         "underlyings": s.underlyings_list,
         "model": s.llm_model,
         "paper": s.alpaca_paper,
@@ -211,6 +212,37 @@ def patch_rule(body: dict, authorization: str | None = Header(default=None)) -> 
         raise HTTPException(status_code=422, detail=str(exc)) from None
     _cache.pop("rules_raw", None)
     return out
+
+
+def _reconciled() -> bool:
+    try:
+        from optionwright.agent import runner
+
+        return runner.reconciled()
+    except Exception:
+        return True
+
+
+@app.get("/api/reconcile")
+def reconcile_status() -> dict:
+    """The DB book against the broker's, leg by leg, as the exits pass sees it.
+    `mismatches` empty = entries allowed. Read-only; nothing here fixes anything."""
+    from optionwright import reconcile
+    from optionwright.broker import alpaca
+    from optionwright.storage import store
+
+    def compute():
+        expected = reconcile.expected_legs(store.live_legs_rows())
+        try:
+            actual = alpaca.broker_option_positions()
+        except Exception as exc:
+            return {"ok": _reconciled(), "error": f"broker unreachable: {str(exc)[:120]}", "expected": expected}
+        mism = reconcile.diff(expected, actual)
+        return {"ok": not mism, "entries_blocked": not _reconciled(), "expected": expected, "broker": actual,
+                "mismatches": [{"symbol": m.symbol, "db": m.expected, "broker": m.actual} for m in mism],
+                "how_to_clear": "fix the cause at the broker or in the DB; the next exits pass (<=60s) unblocks entries when both books agree"}
+
+    return _cached("reconcile", compute)
 
 
 def _require_token(authorization: str | None) -> None:

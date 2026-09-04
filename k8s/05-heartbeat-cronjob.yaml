@@ -1,0 +1,46 @@
+# External heartbeat (tech-debt 6.3): every 10 minutes during US market hours
+# (13:30-20:00 UTC on weekdays, with a margin) a separate pod asks the agent's
+# /api/status and Prometheus whether it is still cycling, and sends WhatsApp if
+# not. Runs OUTSIDE the agent so a hung scheduler cannot hide.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: optionwright-heartbeat
+  namespace: hackathon
+  labels:
+    app: optionwright-heartbeat
+spec:
+  schedule: "*/10 13-21 * * 1-5"
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app: optionwright-heartbeat
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: heartbeat
+              image: registry.richardx.dev/optionwright:0.9.1
+              command: ["python", "-m", "optionwright.agent.heartbeat"]
+              env:
+                - name: HEARTBEAT_STATUS_URL
+                  value: "http://optionwright-service:8080/api/status"
+                - name: HEARTBEAT_PROMETHEUS_URL
+                  value: "http://kube-prometheus-stack-prometheus.observability:9090"
+                - name: WHATSAPP_SEND_URL
+                  value: "http://whatsapp-bridge-service.amael-ia:3000"
+                - name: WHATSAPP_TO
+                  value: "5219993437008"
+                # settings validation needs these to exist; the job never trades
+                - name: ALPACA_PAPER
+                  value: "true"
+              resources:
+                requests: { cpu: "20m", memory: "64Mi" }
+                limits: { cpu: "200m", memory: "128Mi" }
