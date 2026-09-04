@@ -175,3 +175,28 @@ def test_ruleset_from_params_respects_scopes_and_defaults():
     assert RuleSet.from_params(prm, underlying="IWM").max_per_underlying == 1
     assert RuleSet.from_params(prm).max_per_underlying == 2
     assert RuleSet.from_params(prm).max_direction_share == 0.60
+
+
+# ── phase 2 gates ─────────────────────────────────────────────────────────────
+def test_per_group_cap_vetoes():
+    v = evaluate(_spread(), 10, _state(open_positions_group=2), RuleSet(max_per_group=2))
+    assert not v.approved and "per-group cap" in v.reason
+    assert evaluate(_spread(), 10, _state(open_positions_group=1), RuleSet(max_per_group=2)).approved
+
+
+def test_group_cooldown_vetoes_within_window_only():
+    assert not evaluate(_spread(), 10, _state(seconds_since_group_trade=600.0), RuleSet(group_cooldown_seconds=1800)).approved
+    assert evaluate(_spread(), 10, _state(seconds_since_group_trade=1900.0), RuleSet(group_cooldown_seconds=1800)).approved
+    assert evaluate(_spread(), 10, _state(seconds_since_group_trade=None), RuleSet(group_cooldown_seconds=1800)).approved
+
+
+def test_same_short_strike_guard_ignores_the_long_leg():
+    v = evaluate(_spread(), 10, _state(open_short_strikes=frozenset({"SPY|P|767.0"})), RuleSet())
+    assert not v.approved and "same short strike" in v.reason
+    assert evaluate(_spread(), 10, _state(open_short_strikes=frozenset({"SPY|C|767.0", "QQQ|P|767.0"})), RuleSet()).approved
+
+
+def test_ruleset_from_params_carries_group_rules():
+    prm = Params({"group:index": {"max_per_group": 1}})
+    assert RuleSet.from_params(prm, underlying="SPY", group="index").max_per_group == 1
+    assert RuleSet.from_params(prm).max_per_group == 2

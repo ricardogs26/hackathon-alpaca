@@ -416,11 +416,17 @@ def build_policy_state(
     minutes_since_open: float | None = None,
     minutes_to_macro: float | None = None,
     minutes_to_close: float | None = None,
+    group_symbols: list[str] | None = None,
 ) -> PolicyState:
-    """Read the live risk state for one underlying from Postgres."""
+    """Read the live risk state for one underlying from Postgres. `group_symbols`
+    are the peers in its correlation group (the symbol included)."""
+    peers = [s.upper() for s in (group_symbols or [underlying])]
     with _conn() as c:
         open_rows = _rows(c.execute(
-            "SELECT id, option_right, contracts, max_loss FROM positions WHERE status='open'"))
+            "SELECT id, underlying, option_right, contracts, max_loss, short_symbol FROM positions WHERE status='open'"))
+        last_group = c.execute(
+            "SELECT extract(epoch FROM now() - max(ts_open)) FROM positions WHERE underlying = ANY(%s)", (peers,)
+        ).fetchone()
         realized_today = c.execute(
             "SELECT coalesce(sum(realized_pnl),0) FROM positions WHERE status='closed' AND ts_close::date = now()::date"
         ).fetchone()[0]
@@ -447,6 +453,8 @@ def build_policy_state(
         side = "bearish" if r["option_right"] == "call" else "bullish"
         risk_by_direction[side] = risk_by_direction.get(side, 0.0) + float(r["max_loss"] or 0.0)
     net_delta = _net_delta_usd(open_rows, latest_ticks([r["id"] for r in open_rows]))
+    open_in_group = sum(1 for r in open_rows if r["underlying"].upper() in peers)
+    short_strikes = frozenset(_short_strike_key(r["underlying"], r["short_symbol"]) for r in open_rows)
     return PolicyState(
         equity=equity,
         open_positions=int(open_positions),
@@ -461,4 +469,18 @@ def build_policy_state(
         net_delta_usd=net_delta,
         minutes_to_close=minutes_to_close,
         realized_pnl_today=float(realized_today),
+        open_positions_group=open_in_group,
+        seconds_since_group_trade=float(last_group[0]) if last_group and last_group[0] is not None else None,
+        open_short_strikes=short_strikes,
     )
+
+
+def _short_strike_key(underlying: str, short_symbol: str) -> str:
+    """'SPY|C|769.0' from the short leg's OCC symbol (the gates' same-strike guard)."""
+    from optionwright.agent.state import parse_occ
+
+    try:
+        _, _, right, strike = parse_occ(short_symbol)
+        return f"{underlying.upper()}|{right}|{strike}"
+    except ValueError:
+        return f"{underlying.upper()}|?|{short_symbol}"

@@ -66,3 +66,13 @@ def test_summarize_book_empty():
     b = _summarize_book([], pnl_dia=0.0, consec_losses=0)
     assert b["abiertas"] == 0
     assert b["concentracion"] is None
+
+
+# ── phase 2 ──────────────────────────────────────────────────────────────────
+from optionwright.storage.store import _short_strike_key  # noqa: E402
+
+
+def test_short_strike_key_from_occ_symbol():
+    assert _short_strike_key("spy", "SPY260904C00769000") == "SPY|C|769.0"
+    assert _short_strike_key("QQQ", "QQQ260904P00712500") == "QQQ|P|712.5"
+    assert _short_strike_key("SPY", "S1") == "SPY|?|S1"

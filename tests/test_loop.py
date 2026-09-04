@@ -136,3 +136,47 @@ def test_rich_context_degrades_on_error():
     run_cycle("SPY", deps)
     assert captured["signals"] == {}          # degradó, no rompió
     assert captured["memoria"] == {"cerradas": 0}
+
+
+# ── phase 2: liquidity screen and width from spot ────────────────────────────
+from optionwright.options.select import SelectParams  # noqa: E402
+
+
+def test_illiquid_chain_abstains_without_calling_the_llm():
+    rec = _Recorder()
+    calls = {"llm": 0}
+
+    def propose(ctx):
+        calls["llm"] += 1
+        return Proposal(Direction.BULLISH, 0.9, "x")
+
+    deps = rec.deps(None)
+    deps.propose = propose
+    deps.fetch_chain = lambda u, e, r: []          # nothing liquid on either side
+    res = run_cycle("XLF", deps)
+    assert res["action"] == "abstain" and res["reason"] == "illiquid chain"
+    assert calls["llm"] == 0
+    assert rec.decisions[-1][0][6] == "illiquid chain"
+
+
+def test_width_comes_from_spot_and_the_strike_step():
+    rec = _Recorder()
+    deps = rec.deps(Proposal(Direction.BULLISH, 0.9, "up"))
+    deps.spot = lambda u: 640.0                    # 0.0065 * 640 = 4.2 -> 5 on the fixture's $5 strikes
+    deps.select = SelectParams(width_pct=0.0065)
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "opened"
+    assert rec.positions[0][0].width == 5.0
+    deps2 = rec.deps(Proposal(Direction.BULLISH, 0.9, "up"))
+    deps2.spot = lambda u: 640.0
+    deps2.select = SelectParams(width_pct=0.015)   # 9.6 -> 10 wide (635/625)
+    run_cycle("SPY", deps2)
+    assert rec.positions[-1][0].width == 10.0
+
+
+def test_spot_failure_falls_back_to_the_fixed_width():
+    rec = _Recorder()
+    deps = rec.deps(Proposal(Direction.BULLISH, 0.9, "up"))
+    deps.spot = lambda u: (_ for _ in ()).throw(RuntimeError("quote down"))
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "opened" and rec.positions[0][0].width == 5.0

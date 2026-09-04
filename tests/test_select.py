@@ -110,3 +110,37 @@ def test_inverted_credit_is_refused():
         _q(Right.PUT, 630, -0.20, bid=3.0, ask=3.1),
     ]
     assert build_spread(bad, Direction.BULLISH, EXPIRY, width=5.0) is None
+
+
+# ── phase 2: width from spot, tolerance, params ──────────────────────────────
+from optionwright.options.select import SelectParams, strike_step, width_for  # noqa: E402
+from optionwright.policy.params import GLOBAL, Params  # noqa: E402
+
+
+def test_width_for_scales_with_spot_and_snaps_to_the_step():
+    assert width_for(770.0, 0.0065, 1.0) == 5.0      # SPY
+    assert width_for(295.0, 0.0065, 1.0) == 2.0      # IWM: 1.9 -> 2
+    assert width_for(320.0, 0.0065, 2.5) == 2.5      # AAPL: 2.08 -> 2.5
+    assert width_for(232.0, 0.0065, 2.5) == 2.5      # NVDA
+    assert width_for(58.0, 0.0065, 0.5) == 0.5       # tiny spot: never below one step
+    assert width_for(5000.0, 0.0065, 1.0) == 25.0    # clamped
+
+
+def test_strike_step_from_the_chain():
+    assert strike_step(_put_chain()) == 5.0          # the fixture lists strikes every $5
+    assert strike_step([]) == 1.0
+
+
+def test_long_leg_beyond_the_tolerance_yields_no_spread():
+    # Short 635, target long 630. Remove 630: the nearest liquid leg is 625, 5 away = 10 wide.
+    chain = [q for q in _put_chain() if q.strike != 630]
+    legacy = build_spread(chain, Direction.BULLISH, EXPIRY, width=5.0)
+    assert legacy is not None and legacy.width == 10.0                                              # the 4-Sep probe's QQQ 715/705
+    assert build_spread(chain, Direction.BULLISH, EXPIRY, width=5.0, width_tolerance=0.5) is None    # |625-630|=5 > 2.5
+
+
+def test_select_params_from_the_table_with_scopes():
+    prm = Params({GLOBAL: {"width_pct": 0.01}, "group:megacap": {"short_delta": 0.25}})
+    assert SelectParams.from_params(prm).width_pct == 0.01 and SelectParams.from_params(prm).short_delta == 0.30
+    assert SelectParams.from_params(prm, group="megacap").short_delta == 0.25
+    assert SelectParams.from_params(prm).min_open_interest == 100

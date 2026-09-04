@@ -28,7 +28,12 @@ Items 1.1–1.12 shipped; see CHANGELOG 0.5.0 and `docs/RULES.md`. Kept below fo
 | 1.11 | Replay harness over `position_ticks` to validate each rule before it touches an order | C | phase 1 is blind without it |
 | 1.12 | Dashboard panel: state per position (delta, sigmas, sleeps) | M | see what the engine sees |
 
-## Phase 2 · universe and correlation groups (2-3 days)
+## Phase 2 · universe and correlation groups — **done in 0.6.0 (2026-09-04)**
+2.1–2.5 shipped. Honest outcome of 2.2: two groups / seven symbols (index +
+megacap), not five or six groups — sector ETFs, TLT and GLD have no tradable
+2-3-session spreads (nor at 5-8). Sigma-based width (2.3) deferred: Alpaca's
+indicative IV read 0.068 for SPY, implausible; width ∝ spot instead until the
+IV feed is validated. Kept below for the record.
 | # | Activity | Crit | Addresses |
 |---|---|---|---|
 | 2.1 | Correlation groups; caps and cooldown per group (SPY/QQQ/DIA = one) | C | false diversification |

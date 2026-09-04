@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from optionwright.options.models import Direction, VerticalSpread
+from optionwright.options.models import Direction, Right, VerticalSpread
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,8 @@ class RuleSet:
     min_reward_risk: float = 0.20
     max_daily_loss_pct: float = 0.02
     no_entry_minutes_before_close: float = 60.0
+    max_per_group: int = 2
+    group_cooldown_seconds: float = 1800.0
 
     @classmethod
     def from_params(cls, params, underlying: str | None = None, group: str | None = None) -> "RuleSet":
@@ -49,6 +51,7 @@ class RuleSet:
             min_confidence=g("min_confidence"), max_direction_share=g("max_direction_share"),
             max_net_delta_pct=g("max_net_delta_pct"), min_reward_risk=g("min_reward_risk"),
             max_daily_loss_pct=g("max_daily_loss_pct"), no_entry_minutes_before_close=g("no_entry_minutes_before_close"),
+            max_per_group=g("max_per_group"), group_cooldown_seconds=g("group_cooldown_seconds"),
         )
 
 
@@ -68,6 +71,10 @@ class PolicyState:
     net_delta_usd: float | None = None                 # signed $ delta of the book (None = no ticks yet -> gate skipped)
     minutes_to_close: float | None = None              # None = unknown (gate skipped)
     realized_pnl_today: float = 0.0
+    # phase 2: correlation groups
+    open_positions_group: int = 0                      # open spreads on any symbol of THIS spread's group
+    seconds_since_group_trade: float | None = None     # None = the group never traded
+    open_short_strikes: frozenset = frozenset()        # "SPY|C|769.0" of open spreads
 
 
 @dataclass(frozen=True)
@@ -131,9 +138,23 @@ def evaluate(
     if sig in state.open_signatures:
         return Verdict(False, 0, f"duplicate of an open spread on {spread.underlying}")
 
+    # 2d — Per-group cap: SPY, QQQ and IWM move together; three spreads on them are one bet.
+    if state.open_positions_group >= rules.max_per_group:
+        return Verdict(False, 0, f"per-group cap: {state.open_positions_group}/{rules.max_per_group} in {spread.underlying}'s group")
+
+    # 2e — Same short strike guard: a different long leg or expiry on the same
+    # short strike is still the same bet (1-2 Sep: three SPY spreads short the 767 call).
+    strike_key = f"{spread.underlying}|{'C' if spread.right is Right.CALL else 'P'}|{float(spread.short_leg.strike)}"
+    if strike_key in state.open_short_strikes:
+        return Verdict(False, 0, f"same short strike already open: {spread.underlying} {spread.short_leg.strike}")
+
     # 3 — Per-underlying cooldown.
     if state.seconds_since_symbol_trade is not None and state.seconds_since_symbol_trade < rules.cooldown_seconds:
         return Verdict(False, 0, f"cooldown: {state.seconds_since_symbol_trade:.0f}s < {rules.cooldown_seconds:.0f}s")
+
+    # 3b — Group cooldown: after any trade in the group, the whole group waits.
+    if state.seconds_since_group_trade is not None and state.seconds_since_group_trade < rules.group_cooldown_seconds:
+        return Verdict(False, 0, f"group cooldown: {state.seconds_since_group_trade:.0f}s < {rules.group_cooldown_seconds:.0f}s")
 
     # 4 — Opening blackout.
     if state.minutes_since_open is not None and state.minutes_since_open < rules.opening_blackout_minutes:

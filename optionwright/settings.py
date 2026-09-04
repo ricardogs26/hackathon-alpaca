@@ -42,7 +42,13 @@ class Settings(BaseSettings):
     # ── Agent behavior ────────────────────────────────────────────────────────
     cycle_seconds: int = Field(default=180, alias="CYCLE_SECONDS")  # entries pass: chains + LLM
     exit_check_seconds: int = Field(default=60, alias="EXIT_CHECK_SECONDS")  # exits pass: quotes only
-    underlyings: str = Field(default="SPY,QQQ,IWM", alias="UNDERLYINGS")
+    underlyings: str = Field(default="SPY,QQQ,IWM", alias="UNDERLYINGS")   # used only when UNDERLYING_GROUPS is empty
+    # Correlation groups (phase 2): "name:SYM,SYM;name:SYM". Caps and cooldowns
+    # count per group and rule parameters may carry a per-group value. The
+    # 4-Sep-2026 liquidity probe: sector ETFs, TLT and GLD have no tradable
+    # 2-3-session spreads (OI 20-140, bid-ask 27-86%); megacaps do.
+    underlying_groups: str = Field(default="index:SPY,QQQ,IWM;megacap:AAPL,NVDA,AMZN,TSLA", alias="UNDERLYING_GROUPS")
+    chain_prefetch_workers: int = Field(default=3, alias="CHAIN_PREFETCH_WORKERS")
     # ── Rule parameters: SEEDS ONLY ───────────────────────────────────────────
     # Since 0.5.0 the gates and the exits read their thresholds from the `rules`
     # table in Postgres (scopes global / group / underlying, with history). These
@@ -66,6 +72,14 @@ class Settings(BaseSettings):
     expiry_max_days: int = Field(default=3, alias="EXPIRY_MAX_DAYS")
     max_open_positions: int = Field(default=6, alias="MAX_OPEN_POSITIONS")
     max_per_underlying: int = Field(default=2, alias="MAX_PER_UNDERLYING")
+    max_per_group: int = Field(default=2, alias="MAX_PER_GROUP")
+    group_cooldown_seconds: float = Field(default=1800.0, alias="GROUP_COOLDOWN_SECONDS")
+    # selection
+    short_delta: float = Field(default=0.30, alias="SHORT_DELTA")
+    width_pct: float = Field(default=0.0065, alias="WIDTH_PCT")
+    width_tolerance: float = Field(default=0.5, alias="WIDTH_TOLERANCE")
+    min_open_interest: int = Field(default=100, alias="MIN_OPEN_INTEREST")
+    max_quote_spread_pct: float = Field(default=0.15, alias="MAX_QUOTE_SPREAD_PCT")
     max_loss_pct: float = Field(default=0.01, alias="MAX_LOSS_PCT")
     daily_budget_pct: float = Field(default=0.05, alias="DAILY_BUDGET_PCT")
     cooldown_seconds: float = Field(default=2700.0, alias="COOLDOWN_SECONDS")
@@ -103,8 +117,16 @@ class Settings(BaseSettings):
         return v
 
     @property
+    def universe(self):
+        from optionwright.universe import flat_universe, parse_groups
+
+        if self.underlying_groups.strip():
+            return parse_groups(self.underlying_groups)
+        return flat_universe([s.strip().upper() for s in self.underlyings.split(",") if s.strip()])
+
+    @property
     def underlyings_list(self) -> list[str]:
-        return [s.strip().upper() for s in self.underlyings.split(",") if s.strip()]
+        return self.universe.symbols
 
     @property
     def postgres_dsn(self) -> str:

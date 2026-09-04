@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-153%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-171%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
 [Live dashboard](https://optionwright.richardx.dev) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
@@ -65,14 +65,19 @@ Defined-risk credit vertical spreads on the most liquid weekly options.
 
 - A **bull put spread** when the model reads bullish, a **bear call spread** when
   bearish. Both are credit spreads with a capped max loss of `width − credit`.
-- Underlyings limited to a short whitelist (SPY, QQQ, IWM). That whitelist is a
-  risk gate, not a limitation.
-- Strikes chosen by delta, expiries near-weekly (2 to 3 trading sessions out;
-  weekends and exchange holidays are skipped).
+- Underlyings in **correlation groups** (`UNDERLYING_GROUPS`): index ETFs
+  (SPY, QQQ, IWM) and megacaps (AAPL, NVDA, AMZN, TSLA). Caps and cooldowns
+  count per group, because three spreads on SPY, QQQ and IWM are one bet. The
+  universe is what the options market actually supports at 2-3 sessions:
+  sector ETFs, TLT and GLD were probed and have no tradable spreads there.
+- Strikes chosen by delta; width proportional to spot (0.65 %, snapped to the
+  strike step); expiries 2 to 3 trading sessions out (weekends and exchange
+  holidays skipped). A chain with no tradable spread on either side is skipped
+  without calling the model.
 
 ## Risk gates
 
-Fifteen checks run in order before any order (`policy/gates.py`; the full list
+Eighteen checks run in order before any order (`policy/gates.py`; the full list
 with parameters is in [`docs/RULES.md`](docs/RULES.md)). Each can veto or shrink
 a trade, none can enlarge one. Position size is not a fixed constant or a model
 output: it emerges from the gates. The request enters at a ceiling and the
@@ -86,7 +91,9 @@ max-loss, daily-budget, direction-share and net-delta gates shrink it to fit.
 | Open-positions cap | No more than N concurrent spreads |
 | Per-underlying cap | No more than N concurrent spreads on one symbol |
 | Duplicate-spread guard | Never reopen the exact same spread while one is open |
-| Cooldown | No re-entry on a symbol within a window |
+| Per-group cap | No more than N concurrent spreads across a correlation group |
+| Same short strike | Never a second spread short the same strike on one symbol |
+| Cooldown | No re-entry on a symbol, nor on its group, within a window |
 | Opening / closing blackout | No entries in the first 30 min or the last 60 min of the session |
 | Macro blackout | No new trades near FOMC / CPI / NFP prints |
 | Reward/risk floor | A spread paying less than 20 % of its max loss is not opened |
@@ -174,7 +181,7 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | Primary LLM (Featherless, OpenAI, a local Ollama) |
 | `LLM_NATIVE_OLLAMA` | `true` for the native Ollama API, `false` for OpenAI-compatible |
 | `FALLBACK_LLM_BASE_URL` / `FALLBACK_LLM_MODEL` | Optional local fallback model |
-| `UNDERLYINGS` | Comma-separated tickers (default `SPY,QQQ,IWM`) |
+| `UNDERLYING_GROUPS` | Correlation groups, `name:SYM,SYM;name:SYM` (default index + megacap); `UNDERLYINGS` is the flat fallback |
 | `CYCLE_SECONDS` | How often the agent evaluates the market |
 | Rule parameters (`MAX_LOSS_PCT`, `STOP_DELTA`, `OVERNIGHT_MODE`, …) | **Seeds** for the `rules` table on first start; afterwards edit via `PATCH /api/rules`. Full list: [`docs/RULES.md`](docs/RULES.md) |
 | `RULES_TOKEN` | Bearer token for `PATCH /api/rules`; empty disables edits |
@@ -192,7 +199,7 @@ optionwright/
   storage/    Postgres schema + reads (orders, equity, decisions)
   api/        FastAPI: read-only endpoints, the rules API + the live dashboard
   replay.py   the exit rules over recorded ticks, simulated vs actual
-tests/        153 tests over the deterministic core
+tests/        171 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -216,7 +223,7 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 153 tests, no network or account needed
+pytest -q          # 171 tests, no network or account needed
 ```
 
 The deterministic core (spread selection, the risk gates, exit decisions, market

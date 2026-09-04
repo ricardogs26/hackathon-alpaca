@@ -5,6 +5,40 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.6.0 — 2026-09-04 · phase 2: universe and correlation groups
+
+- **Correlation groups.** `UNDERLYING_GROUPS="index:SPY,QQQ,IWM;megacap:AAPL,NVDA,AMZN,TSLA"`
+  replaces the flat list (`UNDERLYINGS` still works as a fallback). Caps and
+  cooldowns count per group — `max_per_group` (2), `group_cooldown_seconds`
+  (1800) — and every rule parameter may carry a `group:<name>` value. New gate:
+  **same short strike** (a different long leg or expiry on the same short strike
+  is still the same bet; 1-2 Sep had three SPY spreads short the 767 call).
+- **The universe, decided by data, not by wish.** The 4-Sep liquidity probe:
+  TLT, GLD, XLE and XLF have no tradable spread at 2-3 sessions and none at
+  5-8 either (OI 20-144, bid-ask 27-86 %, credits $0.05-0.44); DIA lists no
+  expiry in the window. Megacaps do: AAPL (R/R 0.35, OI 2.5k), NVDA (0.42,
+  OI 5.3k), AMZN, TSLA. MSFT and META are too thin. So: two groups, seven
+  symbols — not the five or six groups the plan hoped for. The screen below
+  re-evaluates every symbol every cycle, so a group can be added when its
+  options are real.
+- **Liquidity screen.** With no tradable spread on either side the cycle
+  abstains with reason `illiquid chain` and never calls the LLM. IWM was
+  liquid all week: it never traded because the model abstained "on
+  concentration" (out of the prompt since 0.5.0).
+- **Width ∝ spot.** `width_pct` (0.65 % of spot, snapped to the chain's strike
+  step): SPY 770 → 5, IWM 295 → 2, AAPL 320 → 2.5. The fixed 5 was 1.7 % of
+  IWM and left its bull put at reward/risk 0.11. And **`width_tolerance`**
+  (0.5): the long leg must sit within half a width of the target, otherwise no
+  spread — the probe caught the selector jumping to 10 wide on QQQ (715/705)
+  and MSFT (510/520) when the target strike was thin.
+- Selection knobs (`short_delta`, `width_pct`, `width_tolerance`,
+  `min_open_interest`, `max_quote_spread_pct`) join the rules table
+  (section `selection`), resolvable per group.
+- **Parallel chain prefetch** (`CHAIN_PREFETCH_WORKERS`, 3): seven chains
+  fetched serially would not fit the 180 s cycle.
+- Dashboard: symbol filters come from the running universe.
+- 18 new tests (171 total).
+
 ## 0.5.2 — 2026-09-04
 
 - Dashboard: fix a stray fragment left by the 0.5.1 panel removal that broke

@@ -220,6 +220,24 @@ def _get_chain(underlying: str):
     return chain
 
 
+def prefetch_chains(underlyings: list[str], workers: int = 3) -> dict[str, str | None]:
+    """Warm the per-cycle chain cache for several underlyings in parallel. Each
+    chain read is network-bound (1-30s), so seven underlyings fetched serially
+    would not fit a 180s cycle. Returns {underlying: error or None}; a failure
+    here is not fatal — the cycle's own read retries."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(u: str) -> str | None:
+        try:
+            _get_chain(u)
+            return None
+        except Exception as exc:
+            return str(exc)[:120]
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        return dict(zip(underlyings, ex.map(one, underlyings)))
+
+
 def fetch_chain(underlying: str, expiry: str, right: Right, *, strike_span: float = 25.0) -> list[OptionQuote]:
     """
     Read the option chain for one underlying/expiry/right and return liquid-shaped

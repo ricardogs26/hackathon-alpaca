@@ -58,9 +58,13 @@ spec:
               value: "hackathon"
             - name: POSTGRES_PASSWORD
               valueFrom: { secretKeyRef: { name: optionwright-secrets, key: POSTGRES_PASSWORD } }
-            # Agent behavior
-            - name: UNDERLYINGS
-              value: "SPY,QQQ,IWM"
+            # Agent behavior. Universe as correlation groups (0.6.0): caps and
+            # cooldowns count per group. Sector ETFs / TLT / GLD probed 4-Sep: no
+            # tradable spreads at 2-3 (nor 5-8) sessions; megacaps yes.
+            - name: UNDERLYING_GROUPS
+              value: "index:SPY,QQQ,IWM;megacap:AAPL,NVDA,AMZN,TSLA"
+            - name: CHAIN_PREFETCH_WORKERS
+              value: "3"
             - name: CYCLE_SECONDS
               value: "180"
             - name: EXIT_CHECK_SECONDS
@@ -80,6 +84,21 @@ spec:
               value: "6"
             - name: MAX_PER_UNDERLYING
               value: "2"
+            - name: MAX_PER_GROUP
+              value: "2"
+            - name: GROUP_COOLDOWN_SECONDS
+              value: "1800"
+            # selection
+            - name: SHORT_DELTA
+              value: "0.30"
+            - name: WIDTH_PCT
+              value: "0.0065"
+            - name: WIDTH_TOLERANCE
+              value: "0.5"
+            - name: MIN_OPEN_INTEREST
+              value: "100"
+            - name: MAX_QUOTE_SPREAD_PCT
+              value: "0.15"
             - name: MAX_LOSS_PCT
               value: "0.01"
             - name: DAILY_BUDGET_PCT

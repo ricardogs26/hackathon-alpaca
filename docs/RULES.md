@@ -29,7 +29,10 @@ contracts and the shrinking gates bring it down.
 | 2 | Open-positions cap | `max_open_positions` (6) | that many spreads already open |
 | 2b | Per-underlying cap | `max_per_underlying` (2) | that many open on this symbol |
 | 2c | Duplicate-spread guard | — | the exact same legs are already open |
+| 2d | Per-group cap | `max_per_group` (2) | that many open across the symbol's correlation group (SPY+QQQ+IWM count together) |
+| 2e | Same short strike | — | a spread short the same strike (any long leg / expiry) is already open on this symbol |
 | 3 | Cooldown | `cooldown_seconds` (2700) | this symbol traded less than 45 min ago |
+| 3b | Group cooldown | `group_cooldown_seconds` (1800) | any symbol of the group traded less than 30 min ago |
 | 4 | Opening blackout | `opening_blackout_minutes` (30) | too soon after the open |
 | 4b | Closing blackout | `no_entry_minutes_before_close` (60) | too close to the close |
 | 5 | Macro blackout | `macro_blackout_minutes` (60) | a macro print is near (when a calendar is wired) |
@@ -41,6 +44,18 @@ contracts and the shrinking gates bring it down.
 
 Inputs that come from the network (minutes to close, net delta) are optional:
 unknown means the gate is skipped, never that it invents a number.
+
+## Selection — before the gates (`options/select.py`)
+
+| Parameter (default) | What it does |
+|---------------------|--------------|
+| `short_delta` (0.30) | target \|delta\| of the short leg |
+| `width_pct` (0.0065) | spread width as a fraction of spot, snapped to the chain's strike step: SPY 770 → 5, IWM 295 → 2, AAPL 320 → 2.5 |
+| `width_tolerance` (0.5) | the long leg must sit within this fraction of the width from the target, otherwise no spread (never a silent 10-wide) |
+| `min_open_interest` (100) / `max_quote_spread_pct` (0.15) | a leg is liquid only with this much open interest and a bid-ask no wider than 15 % of the mid |
+
+With no tradable spread on either side the cycle abstains (`illiquid chain`)
+without calling the model. Universe and groups: `UNDERLYING_GROUPS`.
 
 ## Exits — by state (`agent/exits.py`)
 

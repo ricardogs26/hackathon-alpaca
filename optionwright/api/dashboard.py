@@ -161,9 +161,7 @@ DASHBOARD_HTML = r"""<!doctype html>
             <button class="fbtn" data-f="closed">Exits</button>
             <button class="fbtn" data-f="vetoed">Vetoed</button>
             <button class="fbtn" data-f="abstain">Abstain</button>
-            <button class="fbtn" data-f="SPY">SPY</button>
-            <button class="fbtn" data-f="QQQ">QQQ</button>
-            <button class="fbtn" data-f="IWM">IWM</button>
+            <span id="symfilters"></span>
           </div>
         </div>
       </div>
@@ -271,6 +269,7 @@ async function refresh(){
       `<span class="pill">${st.paper?'PAPER':'LIVE'}</span>`;
     if(st.version) $('ver').textContent = 'v'+st.version;
     _marketOpen = st.market_open;
+    renderSymbolFilters(st.underlyings || []);
     const cyc = st.cycle_seconds || 180;
     if(st.market_open===false){
       $('livechip').className='livechip off'; $('livechip').innerHTML='<span class="dot off"></span>PAUSED · market closed';
@@ -335,6 +334,12 @@ function renderState(rows){
 let _decisions = [];
 let _allPos = [];
 let _decFilter = 'all';
+let _symbols = [];
+function renderSymbolFilters(syms){
+  if(JSON.stringify(syms)===JSON.stringify(_symbols)) return;
+  _symbols = syms;
+  $('symfilters').innerHTML = syms.map(u=>`<button class="fbtn" data-f="${u}">${u}</button>`).join('');
+}
 let _marketOpen = null;
 
 // Merge cycle decisions (open/veto/abstain) and position exits (close) into one
@@ -364,7 +369,7 @@ function buildEvents(){
 }
 function matchFilter(e){
   if(_decFilter==='all') return true;
-  if(_decFilter==='SPY'||_decFilter==='QQQ'||_decFilter==='IWM') return e.u===_decFilter;
+  if(_symbols.includes(_decFilter)) return e.u===_decFilter;
   if(_decFilter==='opened') return e.kind==='open';
   if(_decFilter==='opennow') return e.kind==='open' && e.open;
   if(_decFilter==='closed') return e.kind==='close';

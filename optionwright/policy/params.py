@@ -66,6 +66,8 @@ _SPECS = [
     ParamSpec("daily_budget_pct", "float", 0.05, "Capital-at-risk deployable per day, fraction of equity", 0.005, 0.50),
     ParamSpec("max_open_positions", "int", 6, "Concurrent spreads, all underlyings", 1, 50),
     ParamSpec("max_per_underlying", "int", 2, "Concurrent spreads on one symbol", 1, 20),
+    ParamSpec("max_per_group", "int", 2, "Concurrent spreads on one correlation group (SPY+QQQ+IWM count together)", 1, 20),
+    ParamSpec("group_cooldown_seconds", "float", 1800.0, "Re-entry cooldown after any trade in the same correlation group, seconds", 0.0, 86400.0),
     ParamSpec("max_direction_share", "float", 0.60, "Max share of open risk on one side (bullish or bearish); the first position is exempt", 0.34, 1.0),
     ParamSpec("max_net_delta_pct", "float", 0.03, "Cap on |net delta| of the book in $ as a fraction of equity (entries)", 0.001, 0.50),
     ParamSpec("min_reward_risk", "float", 0.20, "Minimum credit / max-loss of a candidate spread", 0.0, 2.0),
@@ -76,6 +78,12 @@ _SPECS = [
     ParamSpec("opening_blackout_minutes", "float", 30.0, "No entries this long after the open", 0.0, 240.0),
     ParamSpec("no_entry_minutes_before_close", "float", 60.0, "No entries this close to the close", 0.0, 240.0),
     ParamSpec("macro_blackout_minutes", "float", 60.0, "No entries this close to a macro print", 0.0, 480.0),
+    # ── selection (options/select.py) ────────────────────────────────────────
+    ParamSpec("short_delta", "float", 0.30, "Target |delta| of the short leg", 0.05, 0.50, section="selection"),
+    ParamSpec("width_pct", "float", 0.0065, "Spread width as a fraction of spot (SPY 770 -> 5, IWM 295 -> 2), rounded to the strike step", 0.001, 0.05, section="selection"),
+    ParamSpec("width_tolerance", "float", 0.5, "The long leg must sit within this fraction of the target width, else no spread", 0.0, 1.0, section="selection"),
+    ParamSpec("min_open_interest", "int", 100, "Liquidity: minimum open interest of a leg", 0, 100000, section="selection"),
+    ParamSpec("max_quote_spread_pct", "float", 0.15, "Liquidity: bid-ask no wider than this fraction of the mid", 0.01, 1.0, section="selection"),
     # ── exits (agent/exits.py) ───────────────────────────────────────────────
     ParamSpec("stop_delta", "float", 0.45, "Close when the short leg's |delta| reaches this (thesis dead)", 0.30, 0.99, section="exits"),
     ParamSpec("stop_mult", "float", 1.0, "Close when the loss reaches this multiple of the credit (cap under the delta stop)", 0.25, 5.0, section="exits"),

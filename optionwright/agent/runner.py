@@ -25,6 +25,7 @@ from optionwright.agent.exits import ExitParams, decide_exit
 from optionwright.agent.loop import Deps, run_cycle
 from optionwright.agent.state import compute_tick, position_clock
 from optionwright.broker import alpaca
+from optionwright.options.select import SelectParams
 from optionwright.policy.gates import RuleSet
 from optionwright.policy.params import Params
 from optionwright.settings import get_settings
@@ -172,7 +173,7 @@ def _manage_positions() -> list[dict]:
                 store.update_peak_captured(pos["id"], peak)
 
             # State inputs for the rules: one greeks snapshot (best effort) and the clock.
-            xp = ExitParams.from_params(params, pos["underlying"])
+            xp = ExitParams.from_params(params, pos["underlying"], get_settings().universe.group_of(pos["underlying"]))
             snap = _snapshot_safe(pos)
             short_delta = None if snap.get("short_delta") is None else abs(float(snap["short_delta"]))
             hours_to_expiry, hours_to_close, sleeps = _clock_inputs_safe(pos, now, next_close)
@@ -272,20 +273,26 @@ _current_params_impl = current_params    # same for `current_params`
 
 def _build_deps(params: Params, underlying: str) -> Deps:
     """Dependencies for one underlying's cycle. Rules resolve per underlying
-    (precedence underlying > group > global) from the parameter table."""
+    (precedence underlying > group > global) from the parameter table; the
+    group comes from the configured universe."""
     s = get_settings()
+    group = s.universe.group_of(underlying)
+    peers = list(s.universe.peers(underlying))
     return Deps(
         account=_account,
         nearest_expiry=lambda u: alpaca.nearest_expiry(u, min_days=s.expiry_min_days, max_days=s.expiry_max_days),
         fetch_chain=alpaca.fetch_chain,
         propose=propose,
         build_state=lambda u, eq: store.build_policy_state(
-            u, eq, minutes_since_open=_minutes_since_open(), minutes_to_close=_minutes_to_close()),
+            u, eq, minutes_since_open=_minutes_since_open(), minutes_to_close=_minutes_to_close(),
+            group_symbols=peers),
         submit_spread=alpaca.submit_spread,
         record_decision=store.record_decision,
         record_position=store.record_position,
         save_equity=store.save_equity,
-        rules=RuleSet.from_params(params, underlying),
+        rules=RuleSet.from_params(params, underlying, group),
+        select=SelectParams.from_params(params, underlying, group),
+        spot=alpaca.get_spot,
         signals=lambda u, e: perception.compute_signals(
             alpaca.recent_bars(u), alpaca.get_spot(u),
             trend_flat_pct=s.perception_trend_flat_pct,
@@ -325,6 +332,9 @@ def run_entries() -> list[dict]:
     # Fresh option chains for this pass; each underlying's chain is fetched once
     # and reused across its puts/calls reads (invalidated per pass, no TTL).
     alpaca.new_cycle()
+    failed = {u: e for u, e in alpaca.prefetch_chains(s.underlyings_list, s.chain_prefetch_workers).items() if e}
+    if failed:
+        logger.warning("chain prefetch failed for %s (the cycle will retry)", failed)
 
     params = current_params()
     results: list[dict] = []

@@ -42,9 +42,10 @@ def _use_clock(monkeypatch, is_open: bool, next_close=None) -> _TradingClient:
 
 
 def _settings(**over):
-    base = dict(stop_loss_mult=2.0, hard_take_profit=0.40, trail_activation=0.30,
-                trail_giveback=0.07, underlyings_list=["SPY", "QQQ", "IWM"],
-                cycle_seconds=180, exit_check_seconds=60)
+    from optionwright.universe import flat_universe
+
+    base = dict(underlyings_list=["SPY", "QQQ", "IWM"], universe=flat_universe(["SPY", "QQQ", "IWM"]),
+                chain_prefetch_workers=3, cycle_seconds=180, exit_check_seconds=60)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -120,6 +121,7 @@ def test_run_entries_refreshes_chains_runs_each_underlying_and_isolates_failures
     _use_clock(monkeypatch, True)
     calls = {"new_cycle": 0}
     monkeypatch.setattr(runner.alpaca, "new_cycle", lambda: calls.__setitem__("new_cycle", calls["new_cycle"] + 1))
+    monkeypatch.setattr(runner.alpaca, "prefetch_chains", lambda syms, workers: {u: None for u in syms})
     monkeypatch.setattr(runner, "_build_deps", lambda params, u: object())
 
     def fake_cycle(u, deps):
@@ -394,3 +396,37 @@ def test_current_params_caches_and_keeps_last_good_values_when_the_table_fails(m
     assert runner.current_params().get("stop_delta") == 0.5 and calls["n"] == 1     # cached
     monkeypatch.setattr(runner, "_PARAMS_TTL", 0.0)
     assert runner.current_params().get("stop_delta") == 0.5 and calls["n"] == 2     # failed load -> last good
+
+
+# ── phase 2: groups and prefetch ──────────────────────────────────────────────
+def test_run_entries_prefetches_every_chain_before_the_cycles(monkeypatch):
+    from types import SimpleNamespace
+    from optionwright.universe import parse_groups
+
+    _use_clock(monkeypatch, True)
+    uni = parse_groups("index:SPY,QQQ;megacap:AAPL")
+    monkeypatch.setattr(runner, "get_settings", lambda: SimpleNamespace(
+        underlyings_list=uni.symbols, universe=uni, chain_prefetch_workers=2, cycle_seconds=180, exit_check_seconds=60))
+    seen = {}
+    monkeypatch.setattr(runner.alpaca, "new_cycle", lambda: None)
+    monkeypatch.setattr(runner.alpaca, "prefetch_chains", lambda syms, workers: seen.update({"syms": syms, "workers": workers}) or {s: None for s in syms})
+    monkeypatch.setattr(runner, "_build_deps", lambda params, u: u)
+    monkeypatch.setattr(runner, "run_cycle", lambda u, deps: {"underlying": u, "action": "abstain"})
+    out = runner.run_entries()
+    assert seen == {"syms": ["SPY", "QQQ", "AAPL"], "workers": 2}
+    assert [o["underlying"] for o in out] == ["SPY", "QQQ", "AAPL"]
+
+
+def test_build_deps_resolves_rules_and_selection_by_group(monkeypatch):
+    from types import SimpleNamespace
+    from optionwright.universe import parse_groups
+
+    uni = parse_groups("index:SPY,QQQ,IWM;megacap:AAPL")
+    monkeypatch.setattr(runner, "get_settings", lambda: SimpleNamespace(
+        universe=uni, expiry_min_days=2, expiry_max_days=3, perception_trend_flat_pct=1.0,
+        perception_vol_high_pct=1.2, agent_rich_context=True))
+    prm = Params({"group:megacap": {"max_per_group": 1, "short_delta": 0.25}})
+    d_spy, d_aapl = runner._build_deps(prm, "SPY"), runner._build_deps(prm, "AAPL")
+    assert d_spy.rules.max_per_group == 2 and d_aapl.rules.max_per_group == 1
+    assert d_spy.select.short_delta == 0.30 and d_aapl.select.short_delta == 0.25
+    assert d_spy.spot is runner.alpaca.get_spot

@@ -15,7 +15,7 @@ from typing import Callable
 
 from optionwright.agent.analyzer import Proposal
 from optionwright.options.models import Direction, Right, VerticalSpread
-from optionwright.options.select import build_spread
+from optionwright.options.select import SelectParams, build_spread, strike_step, width_for
 from optionwright.policy.gates import PolicyState, RuleSet, evaluate
 
 logger = logging.getLogger("optionwright.loop")
@@ -45,6 +45,8 @@ class Deps:
     record_position: Callable[[VerticalSpread, int, str | None], int]
     save_equity: Callable[[float, float], None]
     rules: RuleSet = None  # type: ignore[assignment]
+    select: SelectParams = None  # type: ignore[assignment]
+    spot: Callable[[str], float] = None              # (underlying) -> last price; None = fixed 5-wide
     signals: Callable[[str, str], dict] = None       # (underlying, expiry) -> señales
     memory: Callable[[str], dict] = None             # (underlying) -> resultados recientes
     book: Callable[[], dict] = None                  # -> resumen de portafolio
@@ -64,6 +66,19 @@ def _candidate_summary(spread: VerticalSpread | None) -> dict | None:
     }
 
 
+def _width(deps: Deps, underlying: str, contracts: list, sel: SelectParams) -> float:
+    """Spread width ∝ spot, snapped to the chain's strike step. Without a spot
+    read (or on failure) the legacy fixed 5.0 applies — never a crash."""
+    if deps.spot is None:
+        return 5.0
+    try:
+        spot = float(deps.spot(underlying))
+    except Exception as exc:  # a quote hiccup must not cost the cycle
+        logger.warning("spot for %s unavailable (%s); using fixed width", underlying, exc)
+        return 5.0
+    return width_for(spot, sel.width_pct, strike_step(contracts))
+
+
 def run_cycle(underlying: str, deps: Deps) -> dict:
     rules = deps.rules or RuleSet()
     equity, cash = deps.account()
@@ -77,8 +92,20 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
 
     puts = deps.fetch_chain(underlying, expiry, Right.PUT)
     calls = deps.fetch_chain(underlying, expiry, Right.CALL)
-    bull_put = build_spread(puts, Direction.BULLISH, expiry)
-    bear_call = build_spread(calls, Direction.BEARISH, expiry)
+    sel = deps.select or SelectParams()
+    width = _width(deps, underlying, puts + calls, sel)
+    kw = dict(short_delta=sel.short_delta, width=width, width_tolerance=sel.width_tolerance,
+              min_oi=sel.min_open_interest, max_spread_pct=sel.max_quote_spread_pct)
+    bull_put = build_spread(puts, Direction.BULLISH, expiry, **kw)
+    bear_call = build_spread(calls, Direction.BEARISH, expiry, **kw)
+
+    # Liquidity screen: with no tradable spread on either side there is nothing
+    # to decide — abstain without spending an LLM call (TLT/GLD/XLE/XLF at 2-3
+    # sessions: OI 20-140, bid-ask 27-86%).
+    if bull_put is None and bear_call is None:
+        deps.record_decision(underlying, Direction.ABSTAIN, None, "no liquid spread on either side",
+                             False, 0, "illiquid chain", None)
+        return {"underlying": underlying, "action": "abstain", "reason": "illiquid chain"}
 
     context = {
         "underlying": underlying,
