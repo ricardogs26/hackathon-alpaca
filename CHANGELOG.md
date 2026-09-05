@@ -5,6 +5,30 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.11.0 — 2026-09-04 · the automated reconciler
+
+- **A mismatch between the DB book and the broker book is now resolved by
+  code, with the broker as the source of truth** (`reconciler.py`). Every
+  exits pass, when the two disagree, the reconciler reads the broker's own
+  evidence — the order history for the symbols involved and the account
+  activities (fills, expirations, assignments, exercises) — and decides:
+  both legs gone with a filled closing order → the position is closed at that
+  fill; both legs expired → closed at zero; fewer contracts than the DB says →
+  the quantity is adjusted; a spread at the broker the DB does not know, with
+  the agent's own filled entry order → adopted (or the `unfilled` row that had
+  given up on it is reactivated). **It only ever makes the DB match the
+  broker; it never places an order.** What needs an order or has no evidence
+  goes to a person, marked urgent when a leg is naked (assignment/exercise,
+  a single leg left): that WhatsApp bypasses the rate limit.
+- Every action lands in `reconcile_log` with its evidence (`GET
+  /api/reconcile/log`); at most `RECONCILE_MAX_AUTO_FIXES_PER_DAY` (5) fixes a
+  day — beyond that it stops fixing and calls a human, because something
+  systemic is wrong. Entries stay blocked until the books agree, whichever
+  way. `RECONCILE_AUTO=false` returns to detect-and-notify only.
+- WhatsApp changes tone: "descuadre resuelto solo: #31 cerrada por vencimiento,
+  P&L real…; entradas activas" instead of a task.
+- 21 new tests (271 total).
+
 ## 0.10.0 — 2026-09-04 · tech-debt 2.1 and 3.1
 
 - **Every decision keeps what the model saw** (`decisions.context` JSONB), who

@@ -24,7 +24,7 @@ from optionwright.agent.analyzer import propose
 from optionwright.agent.exits import ExitParams, decide_exit
 from optionwright.agent.loop import Deps, run_cycle
 from optionwright.agent.state import compute_tick, position_clock
-from optionwright import reconcile
+from optionwright import reconcile, reconciler
 from optionwright.broker import alpaca
 from optionwright.options.select import SelectParams
 from optionwright.policy.gates import RuleSet
@@ -303,34 +303,109 @@ def reconciled() -> bool:
 
 
 def _reconcile() -> list:
-    """DB book vs broker book, every exits pass (tech-debt 1.2). A mismatch is
-    logged, gauged, sent to WhatsApp (rate-limited) and blocks new entries until
-    it clears. Never fixed automatically. A broker hiccup keeps the last state."""
+    """
+    DB book vs broker book, every exits pass (tech-debt 1.2). Since 0.11.0 a
+    mismatch is first handed to the automated reconciler, which makes the DB
+    match the broker using the broker's own evidence (orders, activities) and
+    never places an order. What it cannot explain, and anything that would need
+    an order (a naked leg), goes to a human. Entries stay blocked while a
+    mismatch remains. A broker hiccup keeps the last state.
+    """
     global _reconcile_ok, _last_reconcile_alert
     from optionwright import metrics
     from optionwright.agent import notify
 
+    s = get_settings()
     try:
-        expected = reconcile.expected_legs(store.live_legs_rows())
+        live = store.live_legs_rows()
+        expected = reconcile.expected_legs(live)
         actual = alpaca.broker_option_positions()
     except Exception as exc:
         logger.warning("reconciliation skipped (%s); keeping state %s", exc, "ok" if _reconcile_ok else "MISMATCH")
         return []
     mism = reconcile.diff(expected, actual)
+    fixed: list[str] = []
+    human: list = []
+    if mism and getattr(s, "reconcile_auto", True):
+        try:
+            fixed, human, mism = _auto_reconcile(live, actual, mism, s)
+        except Exception as exc:
+            logger.error("automated reconciler failed: %s", exc, exc_info=True)
+            metrics.ERRORS.labels(where="reconciler").inc()
     metrics.RECONCILE_MISMATCH.set(len(mism))
     if mism:
         _reconcile_ok = False
         logger.error("RECONCILIATION MISMATCH (entries blocked): %s", "; ".join(map(str, mism)))
         now = time.monotonic()
-        if _last_reconcile_alert is None or now - _last_reconcile_alert > get_settings().reconcile_alert_minutes * 60:
+        urgent = any(getattr(h, "urgent", False) for h in human)
+        if urgent or _last_reconcile_alert is None or now - _last_reconcile_alert > s.reconcile_alert_minutes * 60:
             _last_reconcile_alert = now
-            notify.send_whatsapp("🚨 optionwright: el libro en la base y el del bróker no coinciden; entradas bloqueadas hasta revisar.\n"
-                                 + "\n".join(f"• {m}" for m in mism))
+            lines = ["🚨 optionwright: el libro en la base y el del bróker no coinciden; entradas bloqueadas."]
+            lines += [f"• {m}" for m in mism]
+            if fixed:
+                lines.append("Corregido solo: " + "; ".join(fixed))
+            if human:
+                lines.append("Necesita una persona:")
+                lines += [f"  {'‼️ ' if h.urgent else ''}{h.evidence}" for h in human]
+            notify.send_whatsapp("\n".join(lines))
     else:
+        if fixed:
+            logger.info("reconciliation fixed automatically: %s", "; ".join(fixed))
+            notify.send_whatsapp("✅ optionwright: descuadre resuelto solo, entradas activas.\n" + "\n".join(f"• {f}" for f in fixed))
         if not _reconcile_ok:
             logger.info("reconciliation clean again; entries unblocked")
         _reconcile_ok = True
     return mism
+
+
+def _auto_reconcile(live: list[dict], actual: dict[str, int], mism: list, s) -> tuple[list[str], list, list]:
+    """Run the reconciler and apply what it decided. Returns (fixes applied, human items, remaining mismatches)."""
+    budget = s.reconcile_max_auto_fixes_per_day - store.auto_fixes_today()
+    symbols = sorted({m.symbol for m in mism} | {r["short_symbol"] for r in live} | {r["long_symbol"] for r in live})
+    orders = alpaca.orders_for_symbols(symbols, s.reconcile_lookback_days)
+    acts = alpaca.activities_for_symbols(symbols, s.reconcile_lookback_days)
+    resolutions = reconciler.resolve(live, actual, orders, acts, store.unfilled_rows(s.reconcile_lookback_days))
+    fixed, human = [], []
+    for r in resolutions:
+        if r.kind == reconciler.HUMAN:
+            human.append(r)
+            store.log_reconcile(r.kind, r.position_id, r.symbols, r.evidence, None)
+            continue
+        if budget <= 0:
+            human.append(reconciler.Resolution(reconciler.HUMAN, r.symbols, f"daily auto-fix cap reached; would have applied {r.kind}: {r.evidence}", r.position_id))
+            continue
+        change = _apply_resolution(r)
+        store.log_reconcile(r.kind, r.position_id, r.symbols, r.evidence, change)
+        fixed.append(change)
+        budget -= 1
+    if fixed:
+        expected = reconcile.expected_legs(store.live_legs_rows())
+        mism = reconcile.diff(expected, actual)
+    return fixed, human, mism
+
+
+def _apply_resolution(r) -> str:
+    """The DB change for one non-human resolution; returns a one-line description."""
+    p = r.payload
+    if r.kind in ("close_fill", "close_expired"):
+        row = next((x for x in store.live_legs_rows() if x["id"] == r.position_id), None)
+        entry = float((row or {}).get("fill_credit") or (row or {}).get("credit") or 0.0)
+        n = int((row or {}).get("contracts") or 0)
+        pnl = round((entry - float(p["fill_price"])) * 100 * n, 2)
+        store.close_position(r.position_id, pnl, p["reason"], fill_exit_price=float(p["fill_price"]))
+        return f"#{r.position_id} cerrada ({r.kind}) a {p['fill_price']}, P&L {pnl:+.2f}"
+    if r.kind == "adjust_qty":
+        store.adjust_contracts(r.position_id, int(p["contracts"]))
+        return f"#{r.position_id} contratos ajustados a {p['contracts']}"
+    if r.kind == "reactivate":
+        store.reactivate_position(r.position_id, float(p["fill_credit"]), int(p["contracts"]))
+        return f"#{r.position_id} reactivada (sí llenó a {p['fill_credit']}) x{p['contracts']}"
+    if r.kind == "adopt":
+        pid = store.adopt_position(underlying=p["underlying"], expiry=p["expiry"], option_right=p["option_right"],
+                                   short_symbol=p["short_symbol"], long_symbol=p["long_symbol"], contracts=int(p["contracts"]),
+                                   fill_credit=float(p["fill_credit"]), order_id=p.get("order_id"))
+        return f"#{pid} adoptada {p['short_symbol']}/{p['long_symbol']} x{p['contracts']} a {p['fill_credit']}"
+    raise ValueError(f"unknown resolution kind {r.kind}")
 
 
 def _clock_inputs_safe(pos: dict, now, next_close) -> tuple[float | None, float | None, bool | None]:

@@ -238,3 +238,23 @@ def test_decision_context_model_latency_and_purge(db):
         c.execute("UPDATE decisions SET ts = now() - interval '200 days' WHERE direction='abstain'")
     assert db.purge(decisions_days=180, ticks_days=90) == {"decisions": 1, "ticks": 0}
     assert len(db.get_decisions()) == 1
+
+
+def test_reconciler_store_ops(db):
+    pid = db.record_position(_spread(), 8, "o1")
+    db.adjust_contracts(pid, 5)
+    row = db.get_positions()[0]
+    assert row["contracts"] == 5 and row["max_loss"] == pytest.approx(3.93 * 100 * 5)
+    u = db.record_position(_spread(underlying="QQQ", short=720.0, long=725.0), 3, "o2", status="pending")
+    db.mark_unfilled(u, "entry canceled")
+    assert [r["id"] for r in db.unfilled_rows()] == [u]
+    db.reactivate_position(u, 1.02, 3)
+    r = {x["id"]: x for x in db.get_positions()}[u]
+    assert r["status"] == "open" and r["fill_credit"] == 1.02 and r["exit_reason"] is None
+    a = db.adopt_position(underlying="SPY", expiry="2099-01-09", option_right="call", short_symbol="SPY990109C00769000",
+                          long_symbol="SPY990109C00774000", contracts=4, fill_credit=1.05, order_id="e1")
+    r = {x["id"]: x for x in db.get_positions()}[a]
+    assert r["status"] == "open" and r["credit"] == 1.05 and r["max_loss"] == pytest.approx((5 - 1.05) * 100 * 4)
+    db.log_reconcile("adopt", a, ("SPY990109C00769000", "SPY990109C00774000"), "entry e1 filled", "#adopted")
+    db.log_reconcile("human", None, ("X",), "unknown", None)
+    assert db.auto_fixes_today() == 1 and len(db.reconcile_log()) == 2 and db.reconcile_log()[0]["kind"] == "human"

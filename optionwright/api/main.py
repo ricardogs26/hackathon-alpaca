@@ -223,6 +223,14 @@ def _reconciled() -> bool:
         return True
 
 
+@app.get("/api/reconcile/log")
+def reconcile_log(limit: int = 50) -> list[dict]:
+    """What the automated reconciler did (and what it left to a person), with evidence."""
+    from optionwright.storage import store
+
+    return _cached(f"reconcile_log:{limit}", lambda: store.reconcile_log(limit))
+
+
 @app.get("/api/reconcile")
 def reconcile_status() -> dict:
     """The DB book against the broker's, leg by leg, as the exits pass sees it.
@@ -240,7 +248,8 @@ def reconcile_status() -> dict:
         mism = reconcile.diff(expected, actual)
         return {"ok": not mism, "entries_blocked": not _reconciled(), "expected": expected, "broker": actual,
                 "mismatches": [{"symbol": m.symbol, "db": m.expected, "broker": m.actual} for m in mism],
-                "how_to_clear": "fix the cause at the broker or in the DB; the next exits pass (<=60s) unblocks entries when both books agree"}
+                "how_to_clear": "the automated reconciler makes the DB match the broker from its orders/activities each exits pass; "
+                                "what it cannot explain (or a naked leg) is listed at /api/reconcile/log as 'human'"}
 
     return _cached("reconcile", compute)
 

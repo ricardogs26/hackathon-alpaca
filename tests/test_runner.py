@@ -49,7 +49,8 @@ def _settings(**over):
                 trend_flat_pct=1.0, vol_high_pct=1.2,
                 entry_fill_wait_s=0.0, entry_order_max_age_s=120.0, close_fill_wait_s=0.0,
                 close_order_max_age_s=60.0, close_limit_step=0.05, close_limit_max_steps=6,
-                reconcile_alert_minutes=30.0)
+                reconcile_alert_minutes=30.0, reconcile_auto=True, reconcile_max_auto_fixes_per_day=5,
+                reconcile_lookback_days=10)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -167,6 +168,11 @@ def _wire_store(monkeypatch, positions, price, raise_for=()):
     monkeypatch.setattr(runner.store, "live_legs_rows", lambda: [])
     monkeypatch.setattr(runner.alpaca, "wait_for_fill", lambda oid, w, poll_s=1.0: {"status": "filled", "filled_avg_price": None})
     monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {})
+    monkeypatch.setattr(runner.alpaca, "orders_for_symbols", lambda syms, days=10: [])
+    monkeypatch.setattr(runner.alpaca, "activities_for_symbols", lambda syms, days=10: [])
+    monkeypatch.setattr(runner.store, "unfilled_rows", lambda days=10: [])
+    monkeypatch.setattr(runner.store, "auto_fixes_today", lambda: 0)
+    monkeypatch.setattr(runner.store, "log_reconcile", lambda *a: None)
     monkeypatch.setattr(runner, "_reconcile_ok", True)
 
     def spread_price(short, long):
@@ -592,7 +598,7 @@ def test_resolve_closing_filled_settles_with_fill_and_stale_reverts(monkeypatch)
 def test_reconciliation_mismatch_blocks_entries_until_it_clears(monkeypatch):
     _use_clock(monkeypatch, True)
     _wire_store(monkeypatch, [], price=1.0)
-    monkeypatch.setattr(runner.store, "live_legs_rows", lambda: [{"status": "open", "contracts": 2, "short_symbol": "S", "long_symbol": "L"}])
+    monkeypatch.setattr(runner.store, "live_legs_rows", lambda: [{"id": 1, "status": "open", "contracts": 2, "short_symbol": "S", "long_symbol": "L"}])
     monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {"S": -2})    # long leg missing at the broker
     sent = []
     from optionwright.agent import notify
@@ -600,7 +606,7 @@ def test_reconciliation_mismatch_blocks_entries_until_it_clears(monkeypatch):
     monkeypatch.setattr(runner, "_last_reconcile_alert", None)
     runner.manage_positions()
     assert runner.reconciled() is False and metrics.RECONCILE_MISMATCH._value.get() == 1
-    assert sent and "no coinciden" in sent[0] and "L: db +2 vs broker +0" in sent[0]
+    assert sent and "no coinciden" in sent[0] and "L: db +2 vs broker +0" in sent[0] and "Necesita una persona" in sent[0]
     # entries are skipped while mismatched
     out = runner.run_entries()
     assert out == [{"action": "skipped", "reason": "reconciliation mismatch"}]
@@ -616,3 +622,94 @@ def test_reconciliation_broker_hiccup_keeps_the_last_state(monkeypatch):
     monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: (_ for _ in ()).throw(RuntimeError("api down")))
     runner.manage_positions()
     assert runner.reconciled() is True
+
+
+# ── 0.11.0: the automated reconciler ──────────────────────────────────────────
+S_, L_ = "SPY990101C00769000", "SPY990101C00774000"
+
+
+def _live(pid=22, n=8):
+    return [{"id": pid, "status": "open", "contracts": n, "short_symbol": S_, "long_symbol": L_, "credit": 1.07,
+             "fill_credit": 1.10, "ts_open": "2026-09-08T14:00:00+00:00", "underlying": "SPY", "expiry": "2099-01-01", "option_right": "call"}]
+
+
+def test_reconciler_closes_from_a_filled_order_and_unblocks(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, _ = _wire_store(monkeypatch, [], price=1.0)
+    live = _live()
+    monkeypatch.setattr(runner.store, "live_legs_rows", lambda: live)
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {})          # both legs gone
+    monkeypatch.setattr(runner.alpaca, "orders_for_symbols", lambda syms, days=10: [
+        {"id": "c1", "status": "filled", "filled_avg_price": 0.62, "submitted_at": "2026-09-08T15:00:00+00:00",
+         "legs": [{"symbol": S_, "side": "buy", "filled_qty": 8}, {"symbol": L_, "side": "sell", "filled_qty": 8}]}])
+    logged, sent = [], []
+    monkeypatch.setattr(runner.store, "log_reconcile", lambda *a: logged.append(a))
+    from optionwright.agent import notify
+    monkeypatch.setattr(notify, "send_whatsapp", lambda t: sent.append(t) or True)
+
+    def close_position(pid, pnl, why, fill_exit_price=None):
+        closes.append((pid, pnl, why, fill_exit_price))
+        live.clear()                                                                       # the DB now agrees
+    monkeypatch.setattr(runner.store, "close_position", close_position)
+    runner.manage_positions()
+    assert closes == [(22, pytest.approx((1.10 - 0.62) * 100 * 8), "reconciled: close order found at broker", 0.62)]
+    assert logged[0][0] == "close_fill" and runner.reconciled() is True
+    assert sent and "resuelto solo" in sent[0]
+
+
+def test_reconciler_adopts_an_unknown_spread_with_the_agents_entry(monkeypatch):
+    _use_clock(monkeypatch, True)
+    _wire_store(monkeypatch, [], price=1.0)
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {S_: -4, L_: 4})
+    monkeypatch.setattr(runner.alpaca, "orders_for_symbols", lambda syms, days=10: [
+        {"id": "e1", "status": "filled", "filled_avg_price": 1.05, "submitted_at": "2026-09-08T14:00:00+00:00",
+         "legs": [{"symbol": S_, "side": "sell", "filled_qty": 4}, {"symbol": L_, "side": "buy", "filled_qty": 4}]}])
+    adopted = []
+
+    def adopt(**kw):
+        adopted.append(kw)
+        monkeypatch.setattr(runner.store, "live_legs_rows", lambda: [{"id": 50, "status": "open", "contracts": 4, "short_symbol": S_, "long_symbol": L_}])
+        return 50
+    monkeypatch.setattr(runner.store, "adopt_position", adopt)
+    runner.manage_positions()
+    assert adopted[0]["contracts"] == 4 and adopted[0]["fill_credit"] == 1.05 and runner.reconciled() is True
+
+
+def test_reconciler_leaves_naked_legs_to_a_human_urgently(monkeypatch):
+    _use_clock(monkeypatch, True)
+    _wire_store(monkeypatch, [], price=1.0)
+    monkeypatch.setattr(runner.store, "live_legs_rows", lambda: _live())
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {L_: 8})      # short leg assigned away
+    sent = []
+    from optionwright.agent import notify
+    monkeypatch.setattr(notify, "send_whatsapp", lambda t: sent.append(t) or True)
+    monkeypatch.setattr(runner, "_last_reconcile_alert", 10.0)                          # rate-limited... but urgent goes through
+    runner.manage_positions()
+    assert runner.reconciled() is False and sent and "‼️" in sent[0] and "single leg" in sent[0]
+
+
+def test_reconciler_respects_the_daily_cap(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, _ = _wire_store(monkeypatch, [], price=1.0)
+    monkeypatch.setattr(runner.store, "live_legs_rows", lambda: _live())
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {})
+    monkeypatch.setattr(runner.alpaca, "orders_for_symbols", lambda syms, days=10: [
+        {"id": "c1", "status": "filled", "filled_avg_price": 0.62, "submitted_at": "2026-09-08T15:00:00+00:00",
+         "legs": [{"symbol": S_, "side": "buy"}, {"symbol": L_, "side": "sell"}]}])
+    monkeypatch.setattr(runner.store, "auto_fixes_today", lambda: 5)
+    sent = []
+    from optionwright.agent import notify
+    monkeypatch.setattr(notify, "send_whatsapp", lambda t: sent.append(t) or True)
+    runner.manage_positions()
+    assert closes == [] and runner.reconciled() is False and "cap reached" in sent[0]
+
+
+def test_reconciler_can_be_switched_off(monkeypatch):
+    _use_clock(monkeypatch, True)
+    closes, _, _ = _wire_store(monkeypatch, [], price=1.0)
+    monkeypatch.setattr(runner, "get_settings", lambda: _settings(reconcile_auto=False))
+    monkeypatch.setattr(runner.store, "live_legs_rows", lambda: _live())
+    monkeypatch.setattr(runner.alpaca, "broker_option_positions", lambda: {})
+    monkeypatch.setattr(runner.alpaca, "orders_for_symbols", lambda syms, days=10: (_ for _ in ()).throw(AssertionError("must not be called")))
+    runner.manage_positions()
+    assert closes == [] and runner.reconciled() is False

@@ -150,7 +150,64 @@ def live_legs_rows() -> list[dict]:
     """Rows the reconciliation compares against the broker (open or closing)."""
     with _conn() as c:
         return _rows(c.execute(
-            "SELECT id, status, contracts, short_symbol, long_symbol FROM positions WHERE status IN ('open','closing')"))
+            "SELECT id, status, contracts, short_symbol, long_symbol, credit, fill_credit, ts_open, underlying, expiry, option_right"
+            " FROM positions WHERE status IN ('open','closing')"))
+
+
+def unfilled_rows(days: int = 10) -> list[dict]:
+    """Entries the agent gave up on (unfilled) — the reconciler may find they did fill."""
+    with _conn() as c:
+        return _rows(c.execute(
+            "SELECT id, short_symbol, long_symbol, contracts FROM positions WHERE status='unfilled'"
+            " AND ts_open >= now() - make_interval(days => %s)", (days,)))
+
+
+# ── automated reconciler (0.11.0): the DB is made to match the broker, never the reverse ──
+def adjust_contracts(position_id: int, contracts: int) -> None:
+    with _conn() as c:
+        c.execute("UPDATE positions SET max_loss = max_loss / contracts * %s, contracts = %s WHERE id=%s AND contracts > 0",
+                  (contracts, contracts, position_id))
+
+
+def adopt_position(*, underlying: str, expiry: str, option_right: str, short_symbol: str, long_symbol: str,
+                   contracts: int, fill_credit: float, order_id: str | None) -> int:
+    """A spread the broker holds and the DB does not: register it so the rules watch it."""
+    from optionwright.agent.state import parse_occ
+
+    _, _, _, ks = parse_occ(short_symbol)
+    _, _, _, kl = parse_occ(long_symbol)
+    width = abs(kl - ks)
+    max_loss = round((width - fill_credit) * 100 * contracts, 2)
+    with _conn() as c:
+        row = c.execute(
+            "INSERT INTO positions (underlying,expiry,option_right,short_symbol,long_symbol,contracts,credit,max_loss,order_id,status,fill_credit)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'open',%s) RETURNING id",
+            (underlying, expiry, option_right, short_symbol, long_symbol, contracts, fill_credit, max_loss, order_id, fill_credit)).fetchone()
+        return int(row[0])
+
+
+def reactivate_position(position_id: int, fill_credit: float, contracts: int) -> None:
+    """An 'unfilled' entry that did fill at the broker: it is open, and it counts."""
+    with _conn() as c:
+        c.execute("UPDATE positions SET status='open', ts_close=NULL, exit_reason=NULL, fill_credit=%s, contracts=%s,"
+                  " max_loss = max_loss / GREATEST(contracts,1) * %s WHERE id=%s", (fill_credit, contracts, contracts, position_id))
+
+
+def log_reconcile(kind: str, position_id: int | None, symbols, evidence: str, change: str | None) -> None:
+    with _conn() as c:
+        c.execute("INSERT INTO reconcile_log (kind, position_id, symbols, evidence, change) VALUES (%s,%s,%s,%s,%s)",
+                  (kind, position_id, ",".join(symbols), evidence, change))
+
+
+def auto_fixes_today() -> int:
+    with _conn() as c:
+        return int(c.execute("SELECT count(*) FROM reconcile_log WHERE kind <> 'human' AND ts::date = now()::date").fetchone()[0])
+
+
+def reconcile_log(limit: int = 50) -> list[dict]:
+    with _conn() as c:
+        rows = _rows(c.execute("SELECT * FROM reconcile_log ORDER BY id DESC LIMIT %s", (limit,)))
+    return [{**r, "ts": r["ts"].isoformat()} for r in rows]
 
 
 # ── rule proposals (phase 4) ──────────────────────────────────────────────────

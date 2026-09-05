@@ -69,3 +69,18 @@ def test_missing_daily_bar_defaults_volume_zero():
 def test_none_open_interest_becomes_zero():
     q = _to_quote(_contract(oi=None), _snapshot(), "SPY")
     assert q.open_interest == 0
+
+
+def test_order_dict_maps_a_multi_leg_order():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from optionwright.broker.alpaca import _order_dict
+
+    o = SimpleNamespace(id="abc", status=SimpleNamespace(value="filled"), filled_avg_price="3.69",
+                        submitted_at=datetime(2026, 9, 4, 13, 30, tzinfo=timezone.utc),
+                        legs=[SimpleNamespace(symbol="S", side=SimpleNamespace(value="buy"), filled_qty="10"),
+                              SimpleNamespace(symbol="L", side="sell", filled_qty=None)])
+    d = _order_dict(o)
+    assert d["id"] == "abc" and d["status"] == "filled" and d["filled_avg_price"] == 3.69
+    assert d["legs"] == [{"symbol": "S", "side": "buy", "filled_qty": 10}, {"symbol": "L", "side": "sell", "filled_qty": 0}]

@@ -113,6 +113,17 @@ CREATE TABLE IF NOT EXISTS rule_proposals (
     decided_at  TIMESTAMPTZ
 );
 
+-- 0.11.0: what the automated reconciler did, with its evidence.
+CREATE TABLE IF NOT EXISTS reconcile_log (
+    id          BIGSERIAL PRIMARY KEY,
+    ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    kind        TEXT NOT NULL,          -- close_fill | close_expired | adjust_qty | adopt | reactivate | human
+    position_id BIGINT,
+    symbols     TEXT NOT NULL,
+    evidence    TEXT NOT NULL,
+    change      TEXT
+);
+
 CREATE TABLE IF NOT EXISTS equity_curve (
     ts       TIMESTAMPTZ NOT NULL DEFAULT now(),
     equity   DOUBLE PRECISION NOT NULL,

@@ -463,6 +463,58 @@ def broker_option_positions() -> dict[str, int]:
     return out
 
 
+def _order_dict(o) -> dict:
+    return {
+        "id": str(o.id), "status": str(getattr(o.status, "value", o.status)).lower(),
+        "filled_avg_price": float(o.filled_avg_price) if getattr(o, "filled_avg_price", None) is not None else None,
+        "submitted_at": o.submitted_at.isoformat() if getattr(o, "submitted_at", None) else None,
+        "legs": [{"symbol": leg.symbol, "side": str(getattr(leg.side, "value", leg.side)).lower(),
+                  "filled_qty": int(float(leg.filled_qty or 0))} for leg in (o.legs or [])],
+    }
+
+
+def orders_for_symbols(symbols: list[str], since_days: int = 10) -> list[dict]:
+    """Every order (any status) touching these option symbols in the window — the
+    reconciler's evidence. A multi-leg order is returned once, with its legs."""
+    from datetime import datetime, timedelta, timezone
+
+    from alpaca.trading.enums import QueryOrderStatus
+    from alpaca.trading.requests import GetOrdersRequest
+
+    if not symbols:
+        return []
+    after = datetime.now(timezone.utc) - timedelta(days=since_days)
+    seen, out = set(), []
+    for o in _trading_client().get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL, symbols=sorted(set(symbols)), after=after, limit=500)):
+        d = _order_dict(o)
+        if d["id"] not in seen:
+            seen.add(d["id"])
+            out.append(d)
+    return out
+
+
+def activities_for_symbols(symbols: list[str], since_days: int = 10) -> list[dict]:
+    """Account activities (fills, expirations OPEXP, assignments OPASN, exercises
+    OPEXC) for these symbols. alpaca-py 0.44 has no wrapper: plain REST."""
+    from datetime import datetime, timedelta, timezone
+
+    import httpx
+
+    if not symbols:
+        return []
+    s = get_settings()
+    base = "https://paper-api.alpaca.markets" if s.alpaca_paper else "https://api.alpaca.markets"
+    after = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    r = httpx.get(f"{base}/v2/account/activities",
+                  params={"activity_types": "FILL,OPEXP,OPASN,OPEXC", "after": after, "page_size": 100},
+                  headers={"APCA-API-KEY-ID": s.alpaca_api_key, "APCA-API-SECRET-KEY": s.alpaca_secret_key}, timeout=20)
+    r.raise_for_status()
+    want = set(symbols)
+    return [{"type": a.get("activity_type"), "symbol": a.get("symbol"), "qty": a.get("qty"), "price": a.get("price"),
+             "side": a.get("side"), "time": a.get("transaction_time") or a.get("date"), "order_id": a.get("order_id")}
+            for a in r.json() if a.get("symbol") in want]
+
+
 def close_spread(short_symbol: str, long_symbol: str, contracts: int, limit_price: float) -> dict:
     """Close a spread by submitting the reverse multi-leg order via the CLI."""
     argv = _build_mleg_close_args(short_symbol, long_symbol, contracts, limit_price)

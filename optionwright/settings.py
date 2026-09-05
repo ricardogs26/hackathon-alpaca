@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     close_limit_step: float = Field(default=0.05, alias="CLOSE_LIMIT_STEP")            # limit = price + step × (attempts + 1)
     close_limit_max_steps: int = Field(default=6, alias="CLOSE_LIMIT_MAX_STEPS")
     reconcile_alert_minutes: float = Field(default=30.0, alias="RECONCILE_ALERT_MINUTES")  # WhatsApp at most this often
+    # 0.11.0: the automated reconciler — DB made to match the broker from its own evidence; never an order.
+    reconcile_auto: bool = Field(default=True, alias="RECONCILE_AUTO")
+    reconcile_max_auto_fixes_per_day: int = Field(default=5, alias="RECONCILE_MAX_AUTO_FIXES_PER_DAY")  # beyond: stop fixing, call a human
+    reconcile_lookback_days: int = Field(default=10, alias="RECONCILE_LOOKBACK_DAYS")
     # ── External heartbeat (tech-debt 6.3): the CronJob's targets ─────────────
     heartbeat_status_url: str = Field(default="http://optionwright-service:8080/api/status", alias="HEARTBEAT_STATUS_URL")
     heartbeat_prometheus_url: str = Field(default="http://kube-prometheus-stack-prometheus.observability:9090", alias="HEARTBEAT_PROMETHEUS_URL")
