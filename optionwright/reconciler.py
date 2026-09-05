@@ -100,7 +100,7 @@ def resolve(live_rows: list[dict], broker: dict[str, int], orders: list[dict], a
                 continue
             expired = _acts(activities, {S, L}, ("OPEXP",))
             if {a["symbol"] for a in expired} >= {S, L}:
-                out.append(Resolution("close_expired", (S, L), "both legs expired (OPEXP)", r["id"],
+                out.append(Resolution("close_expired", (S, L), "both legs expired (OPEXP)", r.get("id"),
                                       {"fill_price": 0.0, "reason": "reconciled: expired worthless"}))
                 continue
             out.append(Resolution(HUMAN, (S, L), "legs gone at the broker; no closing order, expiration or assignment explains it", r.get("id")))

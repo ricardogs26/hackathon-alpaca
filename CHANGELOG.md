@@ -27,7 +27,7 @@ tag is `v<version>`.
   way. `RECONCILE_AUTO=false` returns to detect-and-notify only.
 - WhatsApp changes tone: "descuadre resuelto solo: #31 cerrada por vencimiento,
   P&L real…; entradas activas" instead of a task.
-- 21 new tests (271 total).
+- 20 new tests (270 total).
 
 ## 0.10.0 — 2026-09-04 · tech-debt 2.1 and 3.1
 
