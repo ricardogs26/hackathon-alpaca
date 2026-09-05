@@ -12,6 +12,10 @@ tag is `v<version>`.
   the deployment audit; the days are now spelled out (`mon-fri`) and a test
   pins the next fire time after a Saturday to a Monday.
 - Hackathon docs (`writeup.md`, `SUBMISSION.md`) updated to the running system.
+- Grafana dashboard v2 (`k8s/grafana`): book-vs-broker mismatch, entries filled,
+  closes reverted, fallback decisions, empty completions, snapshot/tick failures,
+  orders by kind and result, who decided (model · outcome), errors by origin,
+  LLM latency p50/p90 — 21 panels, loaded by the sidecar.
 
 ## 0.11.0 — 2026-09-04 · the automated reconciler
 
