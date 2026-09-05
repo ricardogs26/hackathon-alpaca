@@ -125,7 +125,9 @@ class Settings(BaseSettings):
     heartbeat_status_url: str = Field(default="http://optionwright-service:8080/api/status", alias="HEARTBEAT_STATUS_URL")
     heartbeat_prometheus_url: str = Field(default="http://kube-prometheus-stack-prometheus.observability:9090", alias="HEARTBEAT_PROMETHEUS_URL")
     # ── Phase 4: nightly statistical memory ──────────────────────────────────
-    learning_cron_utc: str = Field(default="30 22 * * 1-5", alias="LEARNING_CRON_UTC")   # 17:30 CST, weekdays; "" = off
+    # APScheduler's crontab: day-of-week 0 = MONDAY (not Sunday as in Unix cron), so weekdays are
+    # spelled out — "1-5" would mean Tue-Sat (found by the 4-Sep audit).
+    learning_cron_utc: str = Field(default="30 22 * * mon-fri", alias="LEARNING_CRON_UTC")   # 17:30 CST, weekdays; "" = off
     whatsapp_send_url: str = Field(default="", alias="WHATSAPP_SEND_URL")   # Amael bridge, e.g. http://whatsapp-bridge-service.amael-ia:3000
     whatsapp_to: str = Field(default="", alias="WHATSAPP_TO")               # destination number; empty = notifications off
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

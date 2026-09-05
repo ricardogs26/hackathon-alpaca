@@ -497,9 +497,14 @@ def test_build_scheduler_adds_the_nightly_learning_job_when_configured():
 
     from optionwright.api.main import build_scheduler
 
-    s = SimpleNamespace(cycle_seconds=180, exit_check_seconds=60, learning_cron_utc="30 22 * * 1-5")
+    s = SimpleNamespace(cycle_seconds=180, exit_check_seconds=60, learning_cron_utc="30 22 * * mon-fri")
     sched = build_scheduler(s, lambda: None, lambda: None, lambda: None)
     assert {j.id for j in sched.get_jobs()} == {"entries", "exits", "learning"}
+    # APScheduler: day_of_week 0 = Monday. Spelled-out days run Mon-Fri; "1-5" would run Tue-Sat.
+    from datetime import datetime, timezone
+    trig = sched.get_job("learning").trigger
+    nxt = trig.get_next_fire_time(None, datetime(2026, 9, 5, 0, 0, tzinfo=timezone.utc))   # a Saturday
+    assert nxt.weekday() == 0 and nxt.hour == 22 and nxt.minute == 30                          # Monday 7-Sep
     s2 = SimpleNamespace(cycle_seconds=180, exit_check_seconds=60, learning_cron_utc="")
     assert {j.id for j in build_scheduler(s2, lambda: None, lambda: None, lambda: None).get_jobs()} == {"entries", "exits"}
 

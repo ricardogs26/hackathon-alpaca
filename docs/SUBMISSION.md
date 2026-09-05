@@ -19,7 +19,7 @@ Deadline: **Fri 4 Sep, 9:00 CST**. Submit Thursday night.
 > spreads (a bull put and a bear call) with every number already computed. The
 > LLM sees that pre-digested context and returns only a direction — bullish,
 > bearish, or abstain — with a confidence. Code then picks the strikes, sizes the
-> position, and runs it through ten ordered risk checks that can only veto or
+> position, and runs it through eighteen ordered risk checks that can only veto or
 > shrink a trade, never enlarge it. Sizing emerges from the gates, not from the
 > model. Execution goes through the Alpaca CLI as a single multi-leg order (the
 > MCP-or-CLI core requirement, met via the CLI).

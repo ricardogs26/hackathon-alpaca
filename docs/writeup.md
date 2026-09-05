@@ -44,7 +44,7 @@ of the credit, a stop multiple, or forced flat before expiration.
 
 ## Risk gates
 
-Ten risk checks run in order before any order. Each can veto or shrink a trade; none
+Eighteen risk checks run in order before any order (see `docs/RULES.md`). Each can veto or shrink a trade; none
 can enlarge one. Position size is not chosen by the model or a fixed constant, it
 **emerges from the gates**: the request enters at a ceiling and the max-loss and
 daily-budget gates shrink it to fit.
@@ -83,7 +83,7 @@ LLM confidence and latency, realized P&L, equity) scraped into Grafana.
 - **Live**: deployed on Kubernetes, dashboard at `optionwright.richardx.dev`,
   metrics in Prometheus/Grafana, an external watchdog alerting on failure.
 
-Test coverage: 85 tests over the deterministic core (spread selection, risk
+Test coverage: 270 tests over the deterministic core and the store (Postgres in CI) (spread selection, risk
 gates, exit decisions, market perception, the multi-leg order builder, the LLM
 parser, and the full pipeline).
 

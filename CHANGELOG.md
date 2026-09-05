@@ -5,6 +5,14 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.11.1 — 2026-09-04
+
+- **The nightly memory ran Tue-Sat, not Mon-Fri.** APScheduler's crontab
+  numbers Monday as 0, so `30 22 * * 1-5` meant Tuesday to Saturday. Found by
+  the deployment audit; the days are now spelled out (`mon-fri`) and a test
+  pins the next fire time after a Saturday to a Monday.
+- Hackathon docs (`writeup.md`, `SUBMISSION.md`) updated to the running system.
+
 ## 0.11.0 — 2026-09-04 · the automated reconciler
 
 - **A mismatch between the DB book and the broker book is now resolved by
