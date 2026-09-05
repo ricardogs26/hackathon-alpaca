@@ -313,3 +313,24 @@ def test_condor_places_the_second_wing_only_after_the_first_fills():
     deps2, recorded2 = _with_fill(rec2, Proposal(Direction.NEUTRAL, 0.9, "rango"), "filled")
     res2 = run_cycle("SPY", deps2)
     assert res2["structure"] == "iron_condor" and len(recorded2) == 2
+
+
+# ── tech-debt 2.1: every decision after the model carries what it saw ────────
+def test_decisions_carry_context_model_and_latency():
+    rec = _Recorder()
+    deps = _rich(rec.deps(Proposal(Direction.BULLISH, 0.9, "up", model="Qwen/72B", latency_ms=1234)))
+    run_cycle("SPY", deps)
+    a, k = rec.decisions[-1]
+    assert k["model"] == "Qwen/72B" and k["latency_ms"] == 1234
+    assert k["context"]["underlying"] == "SPY" and "signals" in k["context"] and "bull_put_spread" in k["context"]
+    rec2 = _Recorder()
+    run_cycle("SPY", _rich(rec2.deps(Proposal(Direction.ABSTAIN, 0.3, "nada", model="Qwen/72B", latency_ms=900))))
+    assert rec2.decisions[-1][1]["context"]["underlying"] == "SPY"
+
+
+def test_pre_model_decisions_carry_no_context():
+    rec = _Recorder()
+    deps = _rich(rec.deps(Proposal(Direction.BULLISH, 0.9, "up")))
+    deps.fetch_chain = lambda u, e, r: []
+    run_cycle("SPY", deps)
+    assert "context" not in rec.decisions[-1][1]

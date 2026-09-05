@@ -220,3 +220,21 @@ def test_book_summary_outcomes_and_lookback(db):
     assert db.book_summary(lookback_hours=24.0)["perdidas_consecutivas"] == 0     # out of the window
     assert db.build_policy_state("SPY", 100_000.0, lookback_hours=24.0).consecutive_losses == 0
     assert db.build_policy_state("SPY", 100_000.0, lookback_hours=48.0).consecutive_losses == 2
+
+
+def test_decision_context_model_latency_and_purge(db):
+    import psycopg
+
+    ctx = {"underlying": "SPY", "signals": {"tendencia_5d": "alza"}, "bull_put_spread": None}
+    db.record_decision("SPY", Direction.BULLISH, 0.8, "up", False, 0, "LLM abstained", None, context=ctx, model="Qwen/72B", latency_ms=1500)
+    db.record_decision("SPY", Direction.ABSTAIN, None, "no expiry", False, 0, "no expiry", None)
+    rows = db.get_decisions(with_context=True)
+    assert rows[1]["context"] == ctx and rows[1]["model"] == "Qwen/72B" and rows[1]["latency_ms"] == 1500
+    assert rows[0]["context"] is None and "context" not in db.get_decisions()[0]
+    from datetime import datetime, timezone
+    day = datetime.now(timezone.utc).date().isoformat()
+    assert len(db.decisions_with_context(day)) == 1 and db.decisions_with_context(day, model="other") == []
+    with psycopg.connect(DSN) as c:
+        c.execute("UPDATE decisions SET ts = now() - interval '200 days' WHERE direction='abstain'")
+    assert db.purge(decisions_days=180, ticks_days=90) == {"decisions": 1, "ticks": 0}
+    assert len(db.get_decisions()) == 1

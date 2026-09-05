@@ -40,3 +40,16 @@ def test_replay_all_compares_with_the_actual_outcome():
     rows = replay_all(ExitParams(), positions, ticks)
     assert len(rows) == 1 and rows[0]["position_id"] == 7
     assert rows[0]["sim_pnl"] == -60.0 and rows[0]["actual_pnl"] == -400.0
+
+
+def test_replay_llm_reasks_the_stored_contexts_and_measures_agreement():
+    from optionwright.replay import replay_llm
+
+    rows = [{"id": 1, "ts": "2026-09-08T14:00:00", "underlying": "SPY", "direction": "bearish", "confidence": 0.7, "context": {"underlying": "SPY"}},
+            {"id": 2, "ts": "2026-09-08T14:03:00", "underlying": "QQQ", "direction": "abstain", "confidence": 0.3, "context": '{"underlying": "QQQ"}'}]
+    answers = {"SPY": '{"direction":"bearish","confidence":0.8,"rationale":"x"}', "QQQ": '{"direction":"bullish","confidence":0.65,"rationale":"y"}'}
+    rep = replay_llm(rows, lambda ctx: answers[ctx["underlying"]])
+    assert rep["n"] == 2 and rep["agree"] == 1 and rep["agreement"] == 0.5
+    assert rep["rows"][1]["now"] == "bullish" and rep["rows"][1]["same"] is False
+    rep2 = replay_llm(rows[:1], lambda ctx: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert rep2["rows"][0]["error"] == "boom" and rep2["agree"] == 0

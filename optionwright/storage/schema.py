@@ -16,6 +16,12 @@ CREATE TABLE IF NOT EXISTS decisions (
     position_id   BIGINT
 );
 
+-- Tech-debt 2.1: what the model SAW, who answered and how long it took.
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS context JSONB;
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS model TEXT;
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS latency_ms INTEGER;
+CREATE INDEX IF NOT EXISTS idx_decisions_ts ON decisions(ts);
+
 CREATE TABLE IF NOT EXISTS positions (
     id            BIGSERIAL PRIMARY KEY,
     ts_open       TIMESTAMPTZ NOT NULL DEFAULT now(),

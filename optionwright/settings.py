@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     # Featherless) fails or returns empty. Empty base_url disables the fallback.
     llm_fallback_base_url: str = Field(default="", alias="FALLBACK_LLM_BASE_URL")
     llm_fallback_model: str = Field(default="qwen3.5:9b", alias="FALLBACK_LLM_MODEL")
+    # Tech-debt 3.1: an empty/failed primary answer is retried once before the
+    # (weaker) fallback decides; LLM_EXTRA_BODY is passed verbatim to the OpenAI
+    # client, e.g. {"chat_template_kwargs":{"enable_thinking":false}} for Qwen3.x.
+    llm_retry_primary: bool = Field(default=True, alias="LLM_RETRY_PRIMARY")
+    llm_retry_delay_s: float = Field(default=2.0, alias="LLM_RETRY_DELAY_S")
+    llm_extra_body: str = Field(default="", alias="LLM_EXTRA_BODY")
+    # Tech-debt 2.1: retention of the decision log (with its contexts) and the ticks.
+    decisions_retention_days: int = Field(default=180, alias="DECISIONS_RETENTION_DAYS")
+    ticks_retention_days: int = Field(default=90, alias="TICKS_RETENTION_DAYS")
 
     # ── Datastores ────────────────────────────────────────────────────────────
     postgres_host: str = Field(default="postgres", alias="POSTGRES_HOST")

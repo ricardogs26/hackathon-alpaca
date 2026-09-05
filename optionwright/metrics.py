@@ -94,6 +94,11 @@ def set_position_info(pos_id, underlying, credit, close_price, captured_pct, dec
         captured_pct=f"{captured_pct:.0f}%",
         decision=decision,
     ).set(pnl)
+LLM_DECISIONS = Counter(
+    "optionwright_llm_decisions_total",
+    "Who decided: model and outcome (primary|retry|fallback|abstain_error)",
+    ["model", "outcome"],
+)
 ORDERS = Counter(
     "optionwright_orders_total",
     "Order outcomes by kind (entry|close) and result (filled|pending|unfilled|reverted)",

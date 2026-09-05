@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-239%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-250%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
 [Live dashboard](https://optionwright.richardx.dev) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
@@ -158,9 +158,11 @@ token. Details in [`docs/RULES.md`](docs/RULES.md#learning--the-nightly-memory-a
 - A **confidence gate**: a direction below `min_confidence` is vetoed before
   sizing.
 - It talks to any **OpenAI-compatible** endpoint. The deployed agent runs
-  **Qwen 72B via Featherless** as the primary model, with a **local Ollama as an
-  automatic fallback**: if the primary fails or returns empty, the agent decides
-  with the local model instead of standing down.
+  **Qwen 72B via Featherless** as the primary model; an empty or failed answer
+  is retried once, and only then a **local Ollama fallback** decides instead of
+  standing down. Every decision records what the model saw, who answered and
+  how long it took, so any model can be re-asked the same questions
+  (`python -m optionwright.replay --llm …`).
 - **Fail-closed**: a timeout, a malformed response, an unknown direction, or an
   out-of-range confidence all collapse to *abstain*, never a fabricated trade.
 
@@ -219,7 +221,7 @@ optionwright/
   storage/    Postgres schema + reads (orders, equity, decisions)
   api/        FastAPI: read-only endpoints, the rules API + the live dashboard
   replay.py   the exit rules over recorded ticks, simulated vs actual
-tests/        239 tests over the deterministic core
+tests/        250 tests over the deterministic core
 scripts/      account, chain, and dry-run probes
 k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 ```
@@ -247,7 +249,7 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 239 tests, no network or account needed
+pytest -q          # 250 tests, no network or account needed
 make db-up         # optional: a throwaway Postgres so tests/test_store_db.py runs (CI has one)
 make lint          # ruff + a node syntax check of the dashboard script
 ```

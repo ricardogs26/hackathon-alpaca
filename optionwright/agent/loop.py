@@ -115,7 +115,8 @@ def _note_regime(deps: Deps, pos_id, regime: str | None) -> None:
 
 
 def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, proposal: Proposal,
-                 bull_put: VerticalSpread | None, bear_call: VerticalSpread | None, regime: str | None = None) -> dict:
+                 bull_put: VerticalSpread | None, bear_call: VerticalSpread | None, regime: str | None = None,
+                 meta: dict | None = None) -> dict:
     """
     Iron condor = the bull put AND the bear call, each gated and recorded as its
     own position (the exits manage each wing: the winning wing closes on its
@@ -124,9 +125,10 @@ def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, pro
     nobody asked for. Sizing is per wing (1% each), conservative: only one wing
     can lose at expiry, so the structure's true max loss is the larger wing.
     """
+    meta = meta or {}
     if bull_put is None or bear_call is None:
         reason = "neutral needs both wings; missing " + ("bull put" if bull_put is None else "bear call")
-        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, None)
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, None, **meta)
         return {"underlying": underlying, "action": "abstain", "reason": reason}
     state = deps.build_state(underlying, equity)
     verdicts = [(w, evaluate(w, _SIZE_CEILING, state, rules, confidence=proposal.confidence)) for w in (bull_put, bear_call)]
@@ -134,7 +136,7 @@ def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, pro
     if failed:
         w, v = failed[0]
         reason = f"condor {w.direction.value} wing: {v.reason}"
-        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, w)
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, w, **meta)
         return {"underlying": underlying, "action": "vetoed", "reason": reason}
     n = min(v.contracts for _, v in verdicts)   # same size on both wings
     ids = []
@@ -149,13 +151,13 @@ def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, pro
             reason = f"condor {wing.direction.value} wing {outcome} ({(st or {}).get('status')})" + \
                      ("" if i == 0 else "; the other wing stands alone")
             deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
-                                 False, 0, reason, wing, pos_id)
+                                 False, 0, reason, wing, pos_id, **meta)
             if i == 0:
                 return {"underlying": underlying, "action": "unfilled", "reason": reason}
             break
         _note_regime(deps, pos_id, regime)
         deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
-                             True, n, f"condor {wing.direction.value} wing: {v.reason}", wing, pos_id)
+                             True, n, f"condor {wing.direction.value} wing: {v.reason}", wing, pos_id, **meta)
         ids.append(pos_id)
     logger.info("cycle %s -> iron condor x%d (%s)", underlying, n, ids)
     return {"underlying": underlying, "action": "opened", "contracts": n, "direction": "neutral",
@@ -212,22 +214,23 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
         context["memoria"] = _safe(lambda: deps.memory(underlying))
         context["portafolio"] = _safe(deps.book)
     proposal = deps.propose(context)
+    meta = {"context": context, "model": proposal.model, "latency_ms": proposal.latency_ms}
 
     # Volatile regime, mode "neutral": a directional proposal is not taken; only
     # a condor (both sides, farther from the money) may be opened.
     if regime == "volatil" and sel.volatile_mode == "neutral" and proposal.direction in (Direction.BULLISH, Direction.BEARISH):
         reason = f"volatile regime: directional {proposal.direction.value} not taken"
-        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, None)
+        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, None, **meta)
         return {"underlying": underlying, "action": "vetoed", "reason": reason}
 
     if proposal.direction is Direction.NEUTRAL:
-        return _open_condor(underlying, deps, rules, equity, proposal, bull_put, bear_call, regime)
+        return _open_condor(underlying, deps, rules, equity, proposal, bull_put, bear_call, regime, meta)
 
     chosen = bull_put if proposal.direction is Direction.BULLISH else bear_call if proposal.direction is Direction.BEARISH else None
     if proposal.direction is Direction.ABSTAIN or chosen is None:
         reason = "LLM abstained" if proposal.direction is Direction.ABSTAIN else f"no liquid {proposal.direction.value} spread"
         deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
-                             False, 0, reason, chosen)
+                             False, 0, reason, chosen, **meta)
         return {"underlying": underlying, "action": "abstain", "reason": reason}
 
     # Every gate, the confidence one included, lives in policy/gates.py.
@@ -235,18 +238,18 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
     verdict = evaluate(chosen, _SIZE_CEILING, state, rules, confidence=proposal.confidence)
     if not verdict.approved:
         deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
-                             False, 0, verdict.reason, chosen)
+                             False, 0, verdict.reason, chosen, **meta)
         return {"underlying": underlying, "action": "vetoed", "reason": verdict.reason}
 
     pos_id, outcome, st, order_id = _place(deps, chosen, verdict.contracts)
     if outcome == "unfilled":
         reason = f"order {(st or {}).get('status')}: not filled"
         deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
-                             False, 0, reason, chosen)
+                             False, 0, reason, chosen, **meta)
         return {"underlying": underlying, "action": "unfilled", "reason": reason}
     _note_regime(deps, pos_id, regime)
     deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale,
-                         True, verdict.contracts, verdict.reason + (" (pending fill)" if outcome == "pending" else ""), chosen, pos_id)
+                         True, verdict.contracts, verdict.reason + (" (pending fill)" if outcome == "pending" else ""), chosen, pos_id, **meta)
     logger.info("cycle %s -> %s x%d (%s, %s)", underlying, proposal.direction.value, verdict.contracts, pos_id, outcome)
     return {"underlying": underlying, "action": "opened", "contracts": verdict.contracts,
             "direction": proposal.direction.value, "confidence": proposal.confidence,

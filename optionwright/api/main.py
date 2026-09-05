@@ -291,11 +291,11 @@ def positions(limit: int = 50) -> list[dict]:
 
 
 @app.get("/api/decisions")
-def decisions(limit: int = 30) -> list[dict]:
+def decisions(limit: int = 30, with_context: bool = False) -> list[dict]:
     from optionwright.storage import store
 
     limit = max(1, min(limit, 100))
-    return _cached(f"decisions:{limit}", lambda: store.get_decisions(limit))
+    return _cached(f"decisions:{limit}:{with_context}", lambda: store.get_decisions(limit, with_context))
 
 
 @app.get("/", response_class=None)

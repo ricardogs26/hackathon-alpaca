@@ -5,6 +5,27 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.10.0 — 2026-09-04 · tech-debt 2.1 and 3.1
+
+- **Every decision keeps what the model saw** (`decisions.context` JSONB), who
+  answered (`model`) and how long it took (`latency_ms`). `GET
+  /api/decisions?with_context=true` returns it; `python -m optionwright.replay
+  --llm <model> --day YYYY-MM-DD [--extra-body …]` re-asks another model the
+  SAME questions and reports the agreement — the A/B of 2-Sep had to
+  reconstruct contexts at 80 % fidelity. Retention: the nightly job purges
+  decisions older than `DECISIONS_RETENTION_DAYS` (180) and ticks older than
+  `TICKS_RETENTION_DAYS` (90).
+- **The primary model gets a second chance before the fallback decides.** An
+  empty completion (Featherless answers 200 with no content every few market
+  hours) is detected as such (`EmptyCompletion`, counted under
+  `where="llm_empty"`) and the primary is retried once after
+  `LLM_RETRY_DELAY_S` (2 s); only then the local 9B fallback — which the A/B
+  showed trades without an edge. `optionwright_llm_decisions_total{model,
+  outcome}` says who decided each time (primary | retry | fallback |
+  abstain_error). `LLM_EXTRA_BODY` is passed verbatim to the OpenAI client
+  (`{"chat_template_kwargs":{"enable_thinking":false}}` for Qwen3.x).
+- 11 new tests (250 total).
+
 ## 0.9.3 — 2026-09-04
 
 - **Reconciliation alert on a fresh host.** The WhatsApp rate limit compared

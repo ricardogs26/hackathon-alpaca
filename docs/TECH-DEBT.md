@@ -12,7 +12,7 @@ Reviewed on the code as deployed (phases 0-4 done in one day). Criticality:
 | 1.3 | Realized P&L from **fills**, not from the mid at decision time (`account activities`); label it "estimated" until then | A | Every P&L figure in the dashboard, the memory buckets and the breaker is an estimate; the breaker and the daily-loss pause act on it |
 | 1.4 | Close limit `price + 0.05` → proportional to the quote width (and to the leg price for megacaps) | M | 5 cents is fine for SPY, meaningless for a $3 NVDA spread, too wide for a $0.30 IWM one |
 
-## 2 · Data, retention, observability
+## 2 · Data, retention, observability — **2.1 done in 0.10.0 (2026-09-04); retention of decisions and ticks too (part of 2.2)**
 | # | Activity | Crit | Resolves |
 |---|----------|------|----------|
 | 2.1 | Store the **LLM context** (signals, spreads, book) on each decision (JSONB) | A | The 2-Sep A/B had to reconstruct contexts (80 % fidelity); replaying the model or auditing a decision is impossible today |
@@ -21,7 +21,7 @@ Reviewed on the code as deployed (phases 0-4 done in one day). Criticality:
 | 2.4 | Tick vector: add `regime`, `vol_intradia`, `net_delta_usd` at the time of the tick | M | The nightly memory buckets by regime *at open*; the trail scales by intraday vol that is not stored, so the replay cannot reproduce it |
 | 2.5 | Grafana dashboard `k8s/grafana` not updated since 0.3.0 (no ticks, rules, proposals, condors, groups) | M | The panels no longer describe the agent |
 
-## 3 · Model
+## 3 · Model — **3.1 done in 0.10.0 (2026-09-04)**
 | # | Activity | Crit | Resolves |
 |---|----------|------|----------|
 | 3.1 | Featherless: detect empty `choices`, log "primary returned empty", **retry the primary once** before falling back; expose `enable_thinking` in the client (needed for Qwen3.x) | A | ~1 empty completion every 2-3 market hours falls straight to the 9B, which the A/B showed trades without an edge |

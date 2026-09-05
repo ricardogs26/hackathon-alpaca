@@ -46,6 +46,14 @@ class Proposal:
     direction: Direction
     confidence: float       # 0..1
     rationale: str
+    model: str | None = None        # who answered (primary model, fallback model, or None on abstain-by-error)
+    latency_ms: int | None = None
+
+
+class EmptyCompletion(RuntimeError):
+    """The endpoint answered 200 with no content (Featherless does this every
+    few market hours). Distinguished from a transport error so it is logged
+    honestly and retried once before the fallback decides."""
 
 
 _ABSTAIN = Proposal(Direction.ABSTAIN, 0.0, "abstain (no clear edge or bad response)")
@@ -115,7 +123,16 @@ def _call_ollama_native(base_url: str, model: str, timeout: int, context: dict) 
     return resp.json().get("message", {}).get("content", "") or ""
 
 
-def _call_openai(base_url: str, model: str, api_key: str, timeout: int, context: dict) -> str:
+def _openai_extra(extra_body) -> dict:
+    """`extra_body` for the OpenAI client from a JSON string/dict (LLM_EXTRA_BODY),
+    e.g. {"chat_template_kwargs": {"enable_thinking": false}} for Qwen3.x."""
+    if not extra_body:
+        return {}
+    body = json.loads(extra_body) if isinstance(extra_body, str) else dict(extra_body)
+    return {"extra_body": body} if body else {}
+
+
+def _call_openai(base_url: str, model: str, api_key: str, timeout: int, context: dict, extra_body=None) -> str:
     """OpenAI-compatible path for Featherless / real OpenAI / other hosts."""
     from openai import OpenAI
 
@@ -128,14 +145,18 @@ def _call_openai(base_url: str, model: str, api_key: str, timeout: int, context:
         temperature=0.2,
         max_tokens=150,
         response_format={"type": "json_object"},
+        **_openai_extra(extra_body),
     )
-    return resp.choices[0].message.content or ""
+    if not resp.choices or resp.choices[0].message is None or not (resp.choices[0].message.content or "").strip():
+        raise EmptyCompletion(f"{model} returned an empty completion")
+    return resp.choices[0].message.content
 
 
 def _call_primary(s, context: dict) -> str:
     if s.llm_native_ollama:
         return _call_ollama_native(s.llm_base_url, s.llm_model, s.llm_timeout_seconds, context)
-    return _call_openai(s.llm_base_url, s.llm_model, s.llm_api_key, s.llm_timeout_seconds, context)
+    return _call_openai(s.llm_base_url, s.llm_model, s.llm_api_key, s.llm_timeout_seconds, context,
+                        getattr(s, "llm_extra_body", ""))
 
 
 def _call_fallback(s, context: dict) -> str:
@@ -146,35 +167,51 @@ def _call_fallback(s, context: dict) -> str:
 
 def propose(context: dict) -> Proposal:
     """
-    Ask the LLM for a direction. Tries the primary endpoint (e.g. Featherless),
-    then a local-Ollama fallback if the primary errors or returns empty. Only if
-    both fail does it abstain — never a fabricated trade.
+    Ask the LLM for a direction. Tries the primary endpoint (e.g. Featherless);
+    on an empty or failed answer retries it ONCE after a short pause (tech-debt
+    3.1: the fallback is the weaker model, so the primary gets a second chance
+    first); then the local-Ollama fallback. Only if everything fails does it
+    abstain — never a fabricated trade. Records who decided and how long it took.
     """
     import time
+    from dataclasses import replace
 
     from optionwright import metrics
 
     s = get_settings()
     t0 = time.time()
+    raw, model_used, outcome = "", None, None
 
-    raw = ""
-    try:
-        raw = _call_primary(s, context)
-    except Exception as exc:
-        logger.warning("primary LLM failed: %s", exc)
-        metrics.ERRORS.labels(where="llm").inc()
+    attempts = 2 if getattr(s, "llm_retry_primary", True) else 1
+    for attempt in range(attempts):
+        try:
+            raw = _call_primary(s, context)
+            model_used, outcome = s.llm_model, ("primary" if attempt == 0 else "retry")
+            break
+        except EmptyCompletion as exc:
+            logger.warning("primary LLM returned empty (attempt %d/%d): %s", attempt + 1, attempts, exc)
+            metrics.ERRORS.labels(where="llm_empty").inc()
+        except Exception as exc:
+            logger.warning("primary LLM failed (attempt %d/%d): %s", attempt + 1, attempts, exc)
+            metrics.ERRORS.labels(where="llm").inc()
+        if attempt + 1 < attempts:
+            time.sleep(getattr(s, "llm_retry_delay_s", 2.0))
 
     if not raw and s.llm_fallback_base_url:
         try:
             raw = _call_fallback(s, context)
-            logger.info("used LLM fallback")
+            model_used, outcome = s.llm_fallback_model, "fallback"
+            logger.info("used LLM fallback (%s)", s.llm_fallback_model)
         except Exception as exc:
             logger.warning("fallback LLM failed: %s", exc)
             metrics.ERRORS.labels(where="llm_fallback").inc()
 
+    latency_ms = int((time.time() - t0) * 1000)
     if not raw:
-        return _ABSTAIN
+        metrics.LLM_DECISIONS.labels(model="none", outcome="abstain_error").inc()
+        return replace(_ABSTAIN, latency_ms=latency_ms)
     proposal = _parse_proposal(raw)
+    metrics.LLM_DECISIONS.labels(model=model_used or "?", outcome=outcome or "?").inc()
     metrics.record_llm(time.time() - t0, proposal.confidence)
     metrics.record_decision(proposal.direction.value)
-    return proposal
+    return replace(proposal, model=model_used, latency_ms=latency_ms)

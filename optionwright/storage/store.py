@@ -46,6 +46,10 @@ def record_decision(
     reason: str,
     spread: VerticalSpread | None,
     position_id: int | None = None,
+    *,
+    context: dict | None = None,
+    model: str | None = None,
+    latency_ms: int | None = None,
 ) -> None:
     spread_json = None
     if spread is not None:
@@ -60,9 +64,10 @@ def record_decision(
         })
     with _conn() as c:
         c.execute(
-            "INSERT INTO decisions (underlying,direction,confidence,rationale,approved,contracts,reason,spread,position_id)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (underlying, direction.value, confidence, rationale, approved, contracts, reason, spread_json, position_id),
+            "INSERT INTO decisions (underlying,direction,confidence,rationale,approved,contracts,reason,spread,position_id,"
+            " context,model,latency_ms) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (underlying, direction.value, confidence, rationale, approved, contracts, reason, spread_json, position_id,
+             json.dumps(context, default=str) if context is not None else None, model, latency_ms),
         )
 
 
@@ -365,14 +370,35 @@ def get_positions(limit: int = 50) -> list[dict]:
     return rows
 
 
-def get_decisions(limit: int = 30) -> list[dict]:
+def get_decisions(limit: int = 30, with_context: bool = False) -> list[dict]:
+    cols = "ts, underlying, direction, confidence, rationale, approved, contracts, reason, model, latency_ms"
+    if with_context:
+        cols += ", context"
     with _conn() as c:
-        cur = c.execute(
-            "SELECT ts, underlying, direction, confidence, rationale, approved, contracts, reason"
-            " FROM decisions ORDER BY ts DESC LIMIT %s", (limit,)
-        )
+        cur = c.execute(f"SELECT {cols} FROM decisions ORDER BY ts DESC LIMIT %s", (limit,))
         rows = _rows(cur)
     return [{**r, "ts": r["ts"].isoformat()} for r in rows]
+
+
+def decisions_with_context(day: str, model: str | None = None, limit: int = 5000) -> list[dict]:
+    """Decisions of one day (UTC) that carry their context — the LLM replay's input."""
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT id, ts, underlying, direction, confidence, rationale, model, latency_ms, context FROM decisions"
+            " WHERE ts::date = %s AND context IS NOT NULL AND (%s::text IS NULL OR model = %s)"
+            " ORDER BY ts LIMIT %s", (day, model, model, limit))
+        rows = _rows(cur)
+    return [{**r, "ts": r["ts"].isoformat()} for r in rows]
+
+
+def purge(decisions_days: int = 180, ticks_days: int = 90) -> dict:
+    """Retention (tech-debt 2.1/2.2): old decisions (with their contexts) and ticks."""
+    with _conn() as c:
+        d = c.execute("DELETE FROM decisions WHERE ts < now() - make_interval(days => %s)", (decisions_days,)).rowcount
+        t = c.execute("DELETE FROM position_ticks WHERE ts < now() - make_interval(days => %s)", (ticks_days,)).rowcount
+    if d or t:
+        logger.info("purged %d decisions and %d ticks", d, t)
+    return {"decisions": d, "ticks": t}
 
 
 def last_opened_confidence() -> float | None:

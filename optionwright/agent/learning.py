@@ -218,6 +218,10 @@ def run_nightly(*, dry_run: bool = False, today: date | None = None) -> dict:
     text = summary_text(agg, proposals, ids or [0] * len(proposals), today)
     if not dry_run:
         notify.send_whatsapp(text)
+        try:
+            store.purge(s.decisions_retention_days, s.ticks_retention_days)
+        except Exception as exc:  # housekeeping never breaks the report
+            logger.warning("purge failed: %s", exc)
     logger.info("nightly learning: %d positions, %d buckets, %d proposals", len(stats), len(agg), len(proposals))
     return {"positions": len(stats), "buckets": {"/".join(k): v for k, v in agg.items()},
             "proposals": [p.as_row() | {"id": i} for p, i in zip(proposals, ids or [None] * len(proposals))], "text": text}

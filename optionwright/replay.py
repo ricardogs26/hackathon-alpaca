@@ -12,6 +12,7 @@ Ticks only exist since 0.4.0, so the history grows one session at a time.
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 
 from optionwright.agent.exits import ExitParams, decide_exit
@@ -71,6 +72,30 @@ def replay_all(params: ExitParams, positions: list[dict], ticks_by_position: dic
     return rows
 
 
+def replay_llm(rows: list[dict], call) -> dict:
+    """
+    Re-ask a model the SAME questions the agent asked (tech-debt 2.1: the
+    contexts are stored) and compare with what was answered then.
+    `call(context) -> raw json str`. Returns agreement stats and the rows.
+    """
+    from optionwright.agent.analyzer import _parse_proposal
+
+    out, agree, n = [], 0, 0
+    for r in rows:
+        ctx = r["context"] if isinstance(r["context"], dict) else json.loads(r["context"])
+        try:
+            p = _parse_proposal(call(ctx))
+            new_dir, new_conf, err = p.direction.value, p.confidence, None
+        except Exception as exc:
+            new_dir, new_conf, err = None, None, str(exc)[:80]
+        same = new_dir == r["direction"]
+        n += 1
+        agree += int(same)
+        out.append({"id": r["id"], "ts": r["ts"], "underlying": r["underlying"], "was": r["direction"],
+                    "was_conf": r["confidence"], "now": new_dir, "now_conf": new_conf, "same": same, "error": err})
+    return {"n": n, "agree": agree, "agreement": round(agree / n, 3) if n else None, "rows": out}
+
+
 def _main() -> None:
     from optionwright.storage import store
 
@@ -80,7 +105,13 @@ def _main() -> None:
               "overnight_max_short_delta", "overnight_net_delta_pct"):
         ap.add_argument(f"--{k.replace('_', '-')}", type=float)
     ap.add_argument("--overnight-mode", choices=("flat", "delta"))
+    ap.add_argument("--llm", help="re-ask this model the stored contexts of a day instead of replaying exits")
+    ap.add_argument("--day", help="UTC day for --llm (default: today)")
+    ap.add_argument("--extra-body", help='JSON passed to the OpenAI client, e.g. {"chat_template_kwargs":{"enable_thinking":false}}')
     args = vars(ap.parse_args())
+    if args.get("llm"):
+        _main_llm(args["llm"], args.get("day"), args.get("extra_body"))
+        return
     from optionwright.policy.params import Params
     base = ExitParams.from_params(Params(store.load_rules()))
     over = {k: v for k, v in args.items() if v is not None}
@@ -97,6 +128,25 @@ def _main() -> None:
         print(f"{r['position_id']:>4} {r['underlying']:<4} {r['ticks']:>5} {r['sim_reason'][:34]:<34} {r['sim_pnl']:>9.2f} | "
               f"{(r['actual_reason'] or r['actual_status'] or '')[:34]:<34} {float(r['actual_pnl'] or 0):>9.2f}")
     print(f"total simulated {tot_sim:+.2f} vs actual {tot_act:+.2f} over {len(rows)} positions")
+
+
+def _main_llm(model: str, day: str | None, extra_body: str | None) -> None:
+    import json as _json
+    from datetime import datetime, timezone
+
+    from optionwright.agent.analyzer import _call_openai
+    from optionwright.settings import get_settings
+    from optionwright.storage import store
+
+    s = get_settings()
+    day = day or datetime.now(timezone.utc).date().isoformat()
+    rows = store.decisions_with_context(day)
+    print(f"{len(rows)} decisions with context on {day}; re-asking {model}")
+    rep = replay_llm(rows, lambda ctx: _call_openai(s.llm_base_url, model, s.llm_api_key, s.llm_timeout_seconds, ctx, extra_body))
+    for r in rep["rows"]:
+        if not r["same"]:
+            print(f"  {r['ts'][11:19]} {r['underlying']:<5} was {r['was']} {r['was_conf']} -> now {r['now']} {r['now_conf']} {r['error'] or ''}")
+    print(_json.dumps({k: v for k, v in rep.items() if k != "rows"}))
 
 
 if __name__ == "__main__":
