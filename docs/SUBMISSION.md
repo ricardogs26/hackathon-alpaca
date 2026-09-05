@@ -66,10 +66,10 @@ Deadline: **Fri 4 Sep, 9:00 CST**. Submit Thursday night.
 Tag @AlpacaHQ and @lablabai (X) / Alpaca and lablab.ai (LinkedIn).
 
 1. [x] Day 1 — architecture + first commit (LinkedIn)
-2. [ ] Mon — first live trade
-3. [ ] Tue — dashboard / demo
-4. [ ] Wed — what we learned / risk gates in action
-5. [ ] Thu — final results
+2. [x] Mon — first live trade
+3. [x] Tue — dashboard / demo
+4. [x] Wed — what we learned / risk gates in action
+5. [x] Fri 5-sep — final results + post-mortem: https://www.linkedin.com/feed/update/urn:li:activity:7501830047528378368/
 
 ## Checklist
 
