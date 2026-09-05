@@ -72,6 +72,8 @@ def _fresh_runner_state(monkeypatch):
     monkeypatch.setattr(runner, "get_settings", lambda: _settings())
     monkeypatch.setattr(runner, "_params_cache", None)
     monkeypatch.setattr(runner, "current_params", lambda: Params())
+    # never touch the real broker: a market-open clock by default (tests override with _use_clock)
+    monkeypatch.setattr(runner.alpaca, "_trading_client", lambda: _TradingClient(True))
     yield
 
 
@@ -595,7 +597,7 @@ def test_reconciliation_mismatch_blocks_entries_until_it_clears(monkeypatch):
     sent = []
     from optionwright.agent import notify
     monkeypatch.setattr(notify, "send_whatsapp", lambda t: sent.append(t) or True)
-    monkeypatch.setattr(runner, "_last_reconcile_alert", 0.0)
+    monkeypatch.setattr(runner, "_last_reconcile_alert", None)
     runner.manage_positions()
     assert runner.reconciled() is False and metrics.RECONCILE_MISMATCH._value.get() == 1
     assert sent and "no coinciden" in sent[0] and "L: db +2 vs broker +0" in sent[0]

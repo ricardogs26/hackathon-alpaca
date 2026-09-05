@@ -295,7 +295,7 @@ def _resolve_pending() -> list[dict]:
 
 
 _reconcile_ok = True
-_last_reconcile_alert = 0.0
+_last_reconcile_alert: float | None = None   # monotonic of the last WhatsApp; None = never (a fresh host starts near 0)
 
 
 def reconciled() -> bool:
@@ -322,7 +322,7 @@ def _reconcile() -> list:
         _reconcile_ok = False
         logger.error("RECONCILIATION MISMATCH (entries blocked): %s", "; ".join(map(str, mism)))
         now = time.monotonic()
-        if now - _last_reconcile_alert > get_settings().reconcile_alert_minutes * 60:
+        if _last_reconcile_alert is None or now - _last_reconcile_alert > get_settings().reconcile_alert_minutes * 60:
             _last_reconcile_alert = now
             notify.send_whatsapp("🚨 optionwright: el libro en la base y el del bróker no coinciden; entradas bloqueadas hasta revisar.\n"
                                  + "\n".join(f"• {m}" for m in mism))

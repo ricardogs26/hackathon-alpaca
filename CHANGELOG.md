@@ -5,6 +5,15 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.9.3 — 2026-09-04
+
+- **Reconciliation alert on a fresh host.** The WhatsApp rate limit compared
+  `time.monotonic()` against 0, so on a machine booted less than 30 minutes ago
+  (a CI runner, the lab node after a reboot) the FIRST mismatch alert was never
+  sent. A "never alerted" sentinel replaces the 0. Found by CI's first run.
+- Tests no longer depend on a local `.env`: the runner tests fake the broker
+  clock by default (CI has no keys; locally pydantic was reading yours).
+
 ## 0.9.2 — 2026-09-04 · tech-debt 5.1 and 5.2
 
 - **Postgres in CI** (`tests/test_store_db.py`, a `postgres:16` service in the
