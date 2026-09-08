@@ -204,9 +204,21 @@ function spark(pts){
   const svg=$('spark'); svg.innerHTML='';
   if(!pts||pts.length<2){ return; }
   const ys=pts.map(p=>p.equity), min=Math.min(...ys), max=Math.max(...ys), rng=(max-min)||1;
-  const W=600,Hc=110,pad=6,labelY=128;   // Hc = drawing area; labels sit below at 128
-  const x=i=>pad+i*(W-2*pad)/(pts.length-1);
+  const W=600,Hc=110,pad=6,labelY=128,L=58;   // Hc = drawing area; labels below at 128; L = y-axis gutter
+  const x=i=>L+pad+i*(W-L-2*pad)/(pts.length-1);
   const y=v=>Hc-pad-((v-min)/rng)*(Hc-2*pad);
+  // Y axis in dollars: 3-5 "nice" ticks inside [min,max] so the eye can read
+  // how much money the curve actually moves (a $0.41 wiggle stretched to full
+  // height must not look like a cliff).
+  const raw=(max-min)/4 || 1, mag=Math.pow(10,Math.floor(Math.log10(raw)));
+  const step=[1,2,2.5,5,10].map(m=>m*mag).find(st=>raw<=st);
+  const ticks=[]; for(let v=Math.ceil(min/step)*step; v<=max+1e-9; v+=step) ticks.push(v);
+  if(ticks.length<2){ ticks.length=0; ticks.push(min,max); }
+  const ylab=v=>'$'+Number(v).toLocaleString('en-US',{maximumFractionDigits:step>=1?0:2,minimumFractionDigits:step>=1?0:2});
+  let axis='';
+  ticks.forEach(v=>{ const yy=y(v).toFixed(1);
+    axis+=`<line x1="${L}" y1="${yy}" x2="${W}" y2="${yy}" stroke="var(--line)" stroke-dasharray="2 4"/>`+
+          `<text class="daylab" x="${L-6}" y="${yy}" text-anchor="end" dominant-baseline="middle">${ylab(v)}</text>`; });
   // Adaptive bands: one per DAY when few, per WEEK when many, so 20-30+ days
   // never crowd. Weekends have no equity points, so they never get a band.
   // Band granularity by number of distinct DAYS shown, not by point count
@@ -219,7 +231,7 @@ function spark(pts){
   }
   let bands='';
   segs.forEach((s,k)=>{
-    const left  = k===0 ? 0 : (x(segs[k-1].b)+x(s.a))/2;
+    const left  = k===0 ? L : (x(segs[k-1].b)+x(s.a))/2;
     const right = k===segs.length-1 ? W : (x(s.b)+x(segs[k+1].a))/2;
     if(k%2===0) bands+=`<rect x="${left.toFixed(1)}" y="0" width="${(right-left).toFixed(1)}" height="${Hc}" fill="rgba(61,186,140,.06)"/>`;
     if(k>0) bands+=`<line x1="${left.toFixed(1)}" y1="0" x2="${left.toFixed(1)}" y2="${Hc}" stroke="var(--line)" stroke-dasharray="3 4"/>`;
@@ -238,7 +250,7 @@ function spark(pts){
     `<defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
        <stop offset="0" stop-color="${col}" stop-opacity="0.28"/>
        <stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
-     ${bands}
+     ${bands}${axis}
      <path d="${area}" fill="url(#g)"/>
      <path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
      <circle cx="${x(pts.length-1).toFixed(1)}" cy="${y(ys[ys.length-1]).toFixed(1)}" r="3.2" fill="${col}"/>`;
