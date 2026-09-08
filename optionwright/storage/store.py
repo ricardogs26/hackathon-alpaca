@@ -279,7 +279,7 @@ def update_peak_captured(position_id: int, captured: float) -> None:
 
 _TICK_COLS = (
     "ts", "position_id", "underlying", "spot", "credit", "price", "captured", "peak_captured",
-    "pnl_now", "short_strike", "option_right", "short_delta", "short_iv", "sigma_dist",
+    "pnl_now", "short_strike", "option_right", "short_delta", "short_iv", "long_delta", "sigma_dist",
     "hours_to_expiry", "hours_to_close", "sleeps_tonight", "decision", "reason",
 )
 
@@ -537,6 +537,8 @@ def _net_delta_usd(open_rows: list[dict], ticks: dict[int, dict]) -> float | Non
     """
     Signed $ delta of the book from the latest tick of each open position:
     short call spread -> −|delta|·100·contracts·spot, short put spread -> +.
+    The vertical's delta is short - long when the tick measured the long leg
+    (0.12.0+); older ticks fall back to the short leg (overstates, never hides).
     None if any open position has no measured delta/spot yet: a partial number
     would be a lie the gates would act on.
     """
@@ -546,7 +548,10 @@ def _net_delta_usd(open_rows: list[dict], ticks: dict[int, dict]) -> float | Non
         if not t or t.get("short_delta") is None or t.get("spot") is None:
             return None
         sign = -1.0 if r["option_right"] == "call" else 1.0
-        total += sign * float(t["short_delta"]) * 100.0 * int(r["contracts"]) * float(t["spot"])
+        delta = abs(float(t["short_delta"]))
+        if t.get("long_delta") is not None and delta - abs(float(t["long_delta"])) > 0:
+            delta -= abs(float(t["long_delta"]))
+        total += sign * delta * 100.0 * int(r["contracts"]) * float(t["spot"])
     return round(total, 2)
 
 

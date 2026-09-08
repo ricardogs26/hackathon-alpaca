@@ -157,16 +157,31 @@ def test_direction_share_first_position_exempt_then_shrinks_then_vetoes():
 
 
 def test_net_delta_cap_shrinks_and_vetoes_and_skips_when_unmeasured():
-    # bullish spread, short delta -0.30 at strike 767 -> $23,010 of delta per contract
+    # bullish vertical: short delta -0.30, long -0.09 at strike 767 -> net 0.21 -> $16,107 of delta per contract
     r = RuleSet(max_net_delta_pct=0.50, max_loss_pct=1.0, daily_budget_pct=1.0)   # cap $50,000 on $100k
     sp = _spread(max_loss_target=400.0)
     assert evaluate(sp, 10, _state(net_delta_usd=None), r).approved                        # no ticks yet: skipped
-    v = evaluate(sp, 10, _state(net_delta_usd=0.0), r)                                     # 50,000 / 23,010 -> 2
-    assert v.approved and v.contracts == 2 and "shrunk" in v.reason
+    v = evaluate(sp, 10, _state(net_delta_usd=0.0), r)                                     # 50,000 / 16,107 -> 3
+    assert v.approved and v.contracts == 3 and "shrunk" in v.reason
     v = evaluate(sp, 10, _state(net_delta_usd=40_000.0), r)                                # already long: no room
     assert not v.approved and "net delta cap" in v.reason
     v = evaluate(sp, 10, _state(net_delta_usd=-90_000.0), r)                               # short book: bullish balances it
-    assert v.approved and v.contracts == 6
+    assert v.approved and v.contracts == 8                                                 # (50k+90k)/16,107
+
+
+def test_net_delta_cap_default_lets_one_spy_contract_through_an_empty_book():
+    # 8-Sep-2026: with the short leg alone and 0.03 every candidate of an empty book was vetoed.
+    v = evaluate(_spread(), 1, _state(equity=92_567.0, net_delta_usd=0.0), RuleSet())
+    assert v.approved and v.contracts == 1, v.reason
+
+
+def test_reward_risk_floor_compares_at_two_decimals():
+    # credit 0.999 on width 5 -> R/R 0.24969.. ; floor 0.25 must not veto it (IWM 0.1999 < 0.20, 8-Sep)
+    short = OptionQuote("S", "SPY", Right.PUT, 767, "2026-08-31", 0.999, 0.999, -0.30, 5000, 500)
+    long = OptionQuote("L", "SPY", Right.PUT, 762, "2026-08-31", 0.0, 0.0, -0.09, 5000, 500)
+    sp = VerticalSpread("SPY", Right.PUT, "2026-08-31", short, long, Direction.BULLISH)
+    assert evaluate(sp, 1, _state(), RuleSet(min_reward_risk=0.25)).approved
+    assert not evaluate(sp, 1, _state(), RuleSet(min_reward_risk=0.26)).approved
 
 
 def test_ruleset_from_params_respects_scopes_and_defaults():

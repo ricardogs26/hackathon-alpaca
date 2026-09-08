@@ -5,6 +5,27 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.12.0 — 2026-09-08 · the net-delta gate let nothing through
+
+First real session after the hackathon: 60 decisions, 0 approved. 41 of them
+died at gate 9 with `net delta cap: book $+0 of ±$2777`.
+
+- **Gate 9 measures the vertical's delta (short − long), not the short leg alone.**
+  The short leg alone made one SPY contract $23k of delta against a 3 % cap
+  ($2,777); nothing fit, on any underlying, with an empty book. The book side
+  (`_net_delta_usd`) uses the same net delta when the tick carries `long_delta`
+  (new column, `spread_snapshot` now reads the long leg's greeks too); older
+  ticks fall back to the short leg.
+- **`max_net_delta_pct` default 0.03 → 0.25.** One SPY contract is ~12 % of a
+  $92k account; 25 % is two contracts on an empty book. Range 0.01-1.0.
+- **Reward/risk compares at two decimals.** IWM was vetoed with `0.20 < 0.20`
+  (0.1999).
+- **Volatile regime + `volatile_mode=neutral` + directional proposal → the condor
+  is tried** instead of a flat veto (TSLA: five bullish 0.70-0.75 thrown away).
+  Both wings at the farther volatile delta, both gated, both or nothing; the
+  rationale is prefixed `[volatile: bullish -> condor]`.
+- Tests: the old volatile test asserted `all(...)` over an empty list.
+
 ## 0.11.5 — 2026-09-08
 
 - Wider y-axis gutter: the dollar sign of the tick labels was clipped.

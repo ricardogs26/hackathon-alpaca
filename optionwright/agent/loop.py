@@ -219,9 +219,14 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
     # Volatile regime, mode "neutral": a directional proposal is not taken; only
     # a condor (both sides, farther from the money) may be opened.
     if regime == "volatil" and sel.volatile_mode == "neutral" and proposal.direction in (Direction.BULLISH, Direction.BEARISH):
-        reason = f"volatile regime: directional {proposal.direction.value} not taken"
-        deps.record_decision(underlying, proposal.direction, proposal.confidence, proposal.rationale, False, 0, reason, None, **meta)
-        return {"underlying": underlying, "action": "vetoed", "reason": reason}
+        # The LLM leaned one way in a volatile tape and the house rule says no
+        # directional short gamma today. Instead of vetoing outright (TSLA
+        # 8-Sep-2026: five bullish 0.70-0.75 thrown away), try the condor: both
+        # wings at the farther volatile delta, both gated, both or nothing.
+        logger.info("%s: volatile regime, %s proposal -> trying the condor", underlying, proposal.direction.value)
+        condor = Proposal(Direction.NEUTRAL, proposal.confidence,
+                          f"[volatile: {proposal.direction.value} -> condor] {proposal.rationale}")
+        return _open_condor(underlying, deps, rules, equity, condor, bull_put, bear_call, regime, meta)
 
     if proposal.direction is Direction.NEUTRAL:
         return _open_condor(underlying, deps, rules, equity, proposal, bull_put, bear_call, regime, meta)

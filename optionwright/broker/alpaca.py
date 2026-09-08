@@ -356,9 +356,12 @@ def spread_snapshot(short_symbol: str, long_symbol: str) -> dict | None:
     if snap is None:
         return None
     greeks = getattr(snap, "greeks", None)
+    long_snap = resp.get(long_symbol)
+    long_greeks = getattr(long_snap, "greeks", None) if long_snap is not None else None
     return {
         "short_delta": getattr(greeks, "delta", None) if greeks else None,
         "short_iv": getattr(snap, "implied_volatility", None),
+        "long_delta": getattr(long_greeks, "delta", None) if long_greeks else None,
     }
 
 

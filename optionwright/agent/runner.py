@@ -457,6 +457,7 @@ def _record_tick(pos: dict, price: float, peak: float, decision, spots: dict[str
             pos=pos, price=price, peak_captured=peak,
             decision="close" if decision.close else "hold", reason=decision.reason,
             spot=spots.get(u), short_delta=snap.get("short_delta"), short_iv=snap.get("short_iv"),
+            long_delta=snap.get("long_delta"),
             now=now, next_close=next_close,
         )
         store.record_tick(tick)

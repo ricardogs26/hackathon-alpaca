@@ -33,7 +33,7 @@ class RuleSet:
     macro_blackout_minutes: float = 60.0
     min_confidence: float = 0.6
     max_direction_share: float = 0.60
-    max_net_delta_pct: float = 0.03
+    max_net_delta_pct: float = 0.25
     min_reward_risk: float = 0.20
     max_daily_loss_pct: float = 0.02
     no_entry_minutes_before_close: float = 60.0
@@ -91,6 +91,14 @@ def _max_contracts_by_loss(spread: VerticalSpread, budget: float) -> int:
     if spread.max_loss <= 0:
         return 0
     return int(budget // spread.max_loss)
+
+
+def _vertical_delta(spread) -> float:
+    """|delta| of one vertical = |short| - |long|; falls back to the short leg when the long delta is unknown."""
+    short = abs(float(spread.short_leg.delta or 0.0))
+    long_ = abs(float(getattr(spread.long_leg, 'delta', 0.0) or 0.0))
+    net = short - long_
+    return net if net > 0 else short
 
 
 def _delta_sign(direction: Direction) -> int:
@@ -171,7 +179,8 @@ def evaluate(
         return Verdict(False, 0, f"macro blackout: event in {state.minutes_to_macro:.0f}min")
 
     # 5b — Reward/risk floor: a spread that pays less than the probability it assumes is not opened.
-    if spread.max_loss > 0 and spread.max_profit / spread.max_loss < rules.min_reward_risk:
+    # Compared at 2 decimals: 0.1999 is 0.20 to any human reading the rule (IWM, 8-Sep-2026).
+    if spread.max_loss > 0 and round(spread.max_profit / spread.max_loss, 2) < rules.min_reward_risk:
         return Verdict(False, 0, f"reward/risk {spread.max_profit / spread.max_loss:.2f} < {rules.min_reward_risk:.2f}")
 
     # 6 — Max loss per position (shrinks n to fit the per-position budget).
@@ -208,7 +217,10 @@ def evaluate(
     # fraction of equity. Skipped while no tick has measured the book yet.
     if state.net_delta_usd is not None:
         spot_proxy = spread.short_leg.strike           # within ~1% of spot for a 0.30-delta short
-        per_contract = abs(spread.short_leg.delta) * 100.0 * spot_proxy
+        # The vertical's delta is short minus long: the long leg hedges part of
+        # it. Using the short leg alone (8-Sep-2026) doubled every contract and,
+        # with a 3 % cap, vetoed all 41 candidates of an empty book.
+        per_contract = _vertical_delta(spread) * 100.0 * spot_proxy
         if per_contract > 0:
             cap = state.equity * rules.max_net_delta_pct
             sign = _delta_sign(spread.direction)

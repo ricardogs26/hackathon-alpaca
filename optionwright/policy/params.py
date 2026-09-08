@@ -69,7 +69,7 @@ _SPECS = [
     ParamSpec("max_per_group", "int", 2, "Concurrent spreads on one correlation group (SPY+QQQ+IWM count together)", 1, 20),
     ParamSpec("group_cooldown_seconds", "float", 1800.0, "Re-entry cooldown after any trade in the same correlation group, seconds", 0.0, 86400.0),
     ParamSpec("max_direction_share", "float", 0.60, "Max share of open risk on one side (bullish or bearish); the first position is exempt", 0.34, 1.0),
-    ParamSpec("max_net_delta_pct", "float", 0.03, "Cap on |net delta| of the book in $ as a fraction of equity (entries)", 0.001, 0.50),
+    ParamSpec("max_net_delta_pct", "float", 0.25, "Cap on |net $ delta| of the book (verticals: short - long, x100 x spot) as a fraction of equity; one SPY contract is ~12 %", 0.01, 1.0),
     ParamSpec("min_reward_risk", "float", 0.20, "Minimum credit / max-loss of a candidate spread", 0.0, 2.0),
     ParamSpec("min_confidence", "float", 0.60, "Minimum LLM confidence to open", 0.0, 1.0),
     ParamSpec("cooldown_seconds", "float", 2700.0, "Re-entry cooldown per underlying, seconds", 0.0, 86400.0),

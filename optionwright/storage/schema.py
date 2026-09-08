@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS position_ticks (
     option_right    TEXT NOT NULL,
     short_delta     DOUBLE PRECISION,
     short_iv        DOUBLE PRECISION,
+    long_delta      DOUBLE PRECISION,
     sigma_dist      DOUBLE PRECISION,
     hours_to_expiry DOUBLE PRECISION NOT NULL,
     hours_to_close  DOUBLE PRECISION,
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS position_ticks (
     reason          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ticks_position ON position_ticks(position_id, ts);
+ALTER TABLE position_ticks ADD COLUMN IF NOT EXISTS long_delta DOUBLE PRECISION;
 
 -- Phase 1: rule parameters with precedence (global / group:<name> / underlying:<SYM>)
 -- and a history of every change. The environment only seeds the global scope.

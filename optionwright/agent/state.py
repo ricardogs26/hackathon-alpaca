@@ -93,6 +93,7 @@ class PositionTick:
     sleeps_tonight: bool | None  # True = expiry is after today's session close
     decision: str                # hold | close
     reason: str
+    long_delta: float | None = None   # |delta| of the long leg (net vertical delta = short - long), 0.12.0+
 
     def as_row(self) -> dict:
         return asdict(self)
@@ -110,6 +111,7 @@ def compute_tick(
     short_iv: float | None,
     now: datetime,
     next_close: datetime | None,
+    long_delta: float | None = None,
 ) -> PositionTick:
     """Build the tick from what the exits pass already knows plus one snapshot."""
     _, _, right, strike = parse_occ(pos["short_symbol"])
@@ -131,6 +133,7 @@ def compute_tick(
         option_right=right,
         short_delta=None if short_delta is None else round(abs(float(short_delta)), 4),
         short_iv=None if short_iv is None else round(float(short_iv), 4),
+        long_delta=None if long_delta is None else round(abs(float(long_delta)), 4),
         sigma_dist=sigma_distance(spot or 0.0, strike, right, short_iv, hours_to_expiry),
         hours_to_expiry=round(hours_to_expiry, 2),
         hours_to_close=None if hours_to_close is None else round(hours_to_close, 2),

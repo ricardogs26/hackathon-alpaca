@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     macro_blackout_minutes: float = Field(default=60.0, alias="MACRO_BLACKOUT_MINUTES")
     min_confidence: float = Field(default=0.6, alias="MIN_CONFIDENCE")
     max_direction_share: float = Field(default=0.60, alias="MAX_DIRECTION_SHARE")
-    max_net_delta_pct: float = Field(default=0.03, alias="MAX_NET_DELTA_PCT")
+    max_net_delta_pct: float = Field(default=0.25, alias="MAX_NET_DELTA_PCT")
     min_reward_risk: float = Field(default=0.20, alias="MIN_REWARD_RISK")
     # Bearer token required by PATCH /api/rules and the proposal decisions. Empty = disabled.
     rules_token: str = Field(default="", alias="RULES_TOKEN")

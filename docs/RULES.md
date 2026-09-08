@@ -36,11 +36,11 @@ contracts and the shrinking gates bring it down.
 | 4 | Opening blackout | `opening_blackout_minutes` (30) | too soon after the open |
 | 4b | Closing blackout | `no_entry_minutes_before_close` (60) | too close to the close |
 | 5 | Macro blackout | `macro_blackout_minutes` (60) | a macro print is near (when a calendar is wired) |
-| 5b | Reward/risk floor | `min_reward_risk` (0.20) | credit / max loss of the spread is below the floor |
+| 5b | Reward/risk floor | `min_reward_risk` (0.20) | credit / max loss of the spread, rounded to 2 decimals, is below the floor |
 | 6 | Max loss per position | `max_loss_pct` (0.01) | **shrinks** to 1 % of equity of max loss |
 | 7 | Daily budget | `daily_budget_pct` (0.05) | **shrinks** to what is left of 5 % of equity today |
 | 8 | Direction share | `max_direction_share` (0.60) | **shrinks/vetoes** so no side holds > 60 % of open risk (first position exempt) |
-| 9 | Net delta cap | `max_net_delta_pct` (0.03) | **shrinks/vetoes** so \|net $ delta of the book\| ≤ 3 % of equity (skipped until the ticks have measured the book) |
+| 9 | Net delta cap | `max_net_delta_pct` (0.25) | **shrinks/vetoes** so \|net $ delta of the book\| ≤ 25 % of equity. A vertical's delta is short − long (×100×spot): one SPY contract ≈ 12 % of a $92k account. The 0.03 default used the short leg alone and vetoed every candidate of an empty book (8-Sep-2026) |
 
 Inputs that come from the network (minutes to close, net delta) are optional:
 unknown means the gate is skipped, never that it invents a number.

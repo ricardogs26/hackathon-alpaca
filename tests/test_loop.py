@@ -215,17 +215,23 @@ def test_neutral_vetoed_if_either_wing_fails_a_gate():
     assert res["action"] == "vetoed" and "condor bullish wing: low confidence" in res["reason"] and rec.submitted == []
 
 
-def test_volatile_regime_neutral_mode_refuses_directional_and_sells_farther():
+def test_volatile_regime_neutral_mode_turns_directional_into_a_condor():
+    # 8-Sep-2026: TSLA bullish 0.70-0.75 was vetoed five times; now the condor is tried instead.
     rec = _Recorder()
     deps = _rich(rec.deps(Proposal(Direction.BEARISH, 0.9, "baja")), regime="volatil")
     deps.select = SelectParams(short_delta=0.30, short_delta_volatile=0.20, volatile_mode="neutral")
+    from optionwright.policy.gates import RuleSet
+    deps.rules = RuleSet(min_reward_risk=0.1)     # the 0.20-delta wing of the fixture pays 0.16
     res = run_cycle("SPY", deps)
-    assert res["action"] == "vetoed" and "volatile regime" in res["reason"] and rec.submitted == []
+    assert res["action"] != "vetoed" or "volatile regime" not in res["reason"]
+    assert len(rec.submitted) == 2 and {sp.direction for sp, n in rec.submitted} == {Direction.BULLISH, Direction.BEARISH}
+    assert all(abs(sp.short_leg.delta) <= 0.22 for sp, n in rec.submitted)   # the farther volatile legs of the fixture (0.20 put, 0.22 call)
     rec2 = _Recorder()
     deps2 = _rich(rec2.deps(Proposal(Direction.NEUTRAL, 0.9, "rango")), regime="volatil")
     deps2.select = SelectParams(short_delta=0.30, short_delta_volatile=0.20, volatile_mode="neutral")
+    deps2.rules = RuleSet(min_reward_risk=0.1)
     run_cycle("SPY", deps2)
-    assert all(abs(sp.short_leg.delta) == 0.20 for sp, n in rec2.submitted)   # the 0.20-delta legs of the fixture
+    assert rec2.submitted and all(abs(sp.short_leg.delta) <= 0.22 for sp, n in rec2.submitted)   # farther volatile legs (was vacuous on [])
 
 
 def test_volatile_regime_none_mode_abstains_without_the_llm():
