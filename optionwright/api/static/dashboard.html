@@ -204,7 +204,7 @@ function spark(pts){
   const svg=$('spark'); svg.innerHTML='';
   if(!pts||pts.length<2){ return; }
   const ys=pts.map(p=>p.equity), min=Math.min(...ys), max=Math.max(...ys), rng=(max-min)||1;
-  const W=600,Hc=110,pad=6,labelY=128,L=58;   // Hc = drawing area; labels below at 128; L = y-axis gutter
+  const W=600,Hc=110,pad=6,labelY=128,L=84;   // Hc = drawing area; labels below at 128; L = y-axis gutter
   const x=i=>L+pad+i*(W-L-2*pad)/(pts.length-1);
   const y=v=>Hc-pad-((v-min)/rng)*(Hc-2*pad);
   // Y axis in dollars: 3-5 "nice" ticks inside [min,max] so the eye can read

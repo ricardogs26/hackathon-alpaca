@@ -5,6 +5,10 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.11.5 — 2026-09-08
+
+- Wider y-axis gutter: the dollar sign of the tick labels was clipped.
+
 ## 0.11.4 — 2026-09-08
 
 - **Dollar y-axis on the equity chart.** 3-5 "nice" ticks with gridlines
