@@ -96,7 +96,15 @@ def _place(deps: Deps, spread: VerticalSpread, n: int) -> tuple[int | None, str,
     order_id = order.get("id") if isinstance(order, dict) else None
     if deps.wait_fill is None or not order_id:
         return deps.record_position(spread, n, order_id), "filled", None, order_id
-    st = deps.wait_fill(order_id)
+    try:
+        st = deps.wait_fill(order_id)
+    except Exception as exc:
+        # The order is already at the broker. Whatever broke the status read
+        # (8-Sep-2026: alpaca-py could not parse the mleg response after four
+        # fills), the position must exist in the DB so the exits pass and the
+        # reconciler own it — an unrecorded fill is an unmanaged position.
+        logger.error("fill status for %s unreadable (%s); recording as pending", order_id, exc)
+        return deps.record_position(spread, n, order_id, status="pending"), "pending", {"status": "unknown"}, order_id
     status = str(st.get("status", "")).lower()
     if status == "filled":
         return deps.record_position(spread, n, order_id, status="open", fill_credit=st.get("filled_avg_price")), "filled", st, order_id

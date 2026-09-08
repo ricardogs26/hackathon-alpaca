@@ -5,6 +5,26 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.12.1 — 2026-09-08 · four fills the DB never saw
+
+At 15:38 UTC the first entries of the day filled at the broker (IWM bear call,
+AAPL / NVDA / AMZN bull puts, 4 contracts each) and the cycle raised right
+after: alpaca-py 0.33's typed `Order` model could not parse Alpaca's multi-leg
+response (`asset_id: ""`, `side: ""`, legs with `order_class: "mleg"` — six
+validation errors). The position was never recorded, the exits pass had
+nothing to manage, and the reconciler failed on the same parse. The mismatch
+guard did its job: entries were blocked.
+
+- **Order reads go through plain REST** (`/v2/orders/{id}`, `/v2/orders`), like
+  the activities already did. `filled_avg_price` is returned as a magnitude:
+  Alpaca reports an mleg entry as a negative credit and a close as a positive
+  debit, and every caller knows its side.
+- **`_place` never orphans a submitted order.** If the fill-status read raises,
+  the position is recorded `pending` and the exits pass resolves it.
+- Tests: the real 8-Sep payload, dedup of `orders_for_symbols`, and the
+  pending fallback. The fill path had never run in production during market
+  hours (0.9.0 shipped after the close on 4-Sep).
+
 ## 0.12.0 — 2026-09-08 · the net-delta gate let nothing through
 
 First real session after the hackathon: 60 decisions, 0 approved. 41 of them

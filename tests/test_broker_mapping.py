@@ -71,16 +71,15 @@ def test_none_open_interest_becomes_zero():
     assert q.open_interest == 0
 
 
-def test_order_dict_maps_a_multi_leg_order():
-    from datetime import datetime, timezone
-    from types import SimpleNamespace
+def test_order_from_json_maps_a_multi_leg_order():
+    from optionwright.broker.alpaca import _order_from_json
 
-    from optionwright.broker.alpaca import _order_dict
-
-    o = SimpleNamespace(id="abc", status=SimpleNamespace(value="filled"), filled_avg_price="3.69",
-                        submitted_at=datetime(2026, 9, 4, 13, 30, tzinfo=timezone.utc),
-                        legs=[SimpleNamespace(symbol="S", side=SimpleNamespace(value="buy"), filled_qty="10"),
-                              SimpleNamespace(symbol="L", side="sell", filled_qty=None)])
-    d = _order_dict(o)
-    assert d["id"] == "abc" and d["status"] == "filled" and d["filled_avg_price"] == 3.69
-    assert d["legs"] == [{"symbol": "S", "side": "buy", "filled_qty": 10}, {"symbol": "L", "side": "sell", "filled_qty": 0}]
+    o = {"id": "abc", "status": "filled", "filled_avg_price": "3.69", "filled_qty": "10",
+         "submitted_at": "2026-09-04T13:30:00Z", "order_class": "mleg", "asset_id": "", "side": "",
+         "legs": [{"symbol": "S", "side": "buy", "filled_qty": "10", "filled_avg_price": "6.78"},
+                  {"symbol": "L", "side": "sell", "filled_qty": None, "filled_avg_price": None}]}
+    d = _order_from_json(o)
+    assert d["id"] == "abc" and d["status"] == "filled" and d["filled_avg_price"] == 3.69 and d["filled_qty"] == 10
+    assert d["legs"] == [{"symbol": "S", "side": "buy", "filled_qty": 10, "filled_avg_price": 6.78},
+                         {"symbol": "L", "side": "sell", "filled_qty": 0, "filled_avg_price": None}]
+    assert _order_from_json({**o, "filled_avg_price": "-0.54"})["filled_avg_price"] == 0.54   # credit sign dropped

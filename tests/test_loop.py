@@ -215,6 +215,22 @@ def test_neutral_vetoed_if_either_wing_fails_a_gate():
     assert res["action"] == "vetoed" and "condor bullish wing: low confidence" in res["reason"] and rec.submitted == []
 
 
+def test_place_records_pending_when_the_fill_status_read_blows_up():
+    # 8-Sep-2026: four spreads filled at the broker, the status read raised, none reached the DB.
+    from optionwright.agent.loop import _place
+    from optionwright.options.models import VerticalSpread
+    pc = _put_chain()
+    sp = VerticalSpread("SPY", Right.PUT, "2026-09-04", pc[2], pc[3], Direction.BULLISH)
+    rec = _Recorder()
+    deps = rec.deps(Proposal(Direction.BULLISH, 0.9, "x"))
+    recorded = []
+    deps.record_position = lambda spread, n, order_id, status="open", fill_credit=None: recorded.append((n, order_id, status)) or 42
+    deps.submit_spread = lambda spread, n: {"id": "ord-1"}
+    deps.wait_fill = lambda oid: (_ for _ in ()).throw(ValueError("6 validation errors for Order"))
+    pos_id, outcome, st, oid = _place(deps, sp, 3)
+    assert (pos_id, outcome, oid) == (42, "pending", "ord-1") and recorded == [(3, "ord-1", "pending")]
+
+
 def test_volatile_regime_neutral_mode_turns_directional_into_a_condor():
     # 8-Sep-2026: TSLA bullish 0.70-0.75 was vetoed five times; now the condor is tried instead.
     rec = _Recorder()

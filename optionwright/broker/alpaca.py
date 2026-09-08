@@ -412,22 +412,54 @@ def _build_mleg_close_args(short_symbol: str, long_symbol: str, contracts: int, 
 TERMINAL_UNFILLED = ("canceled", "expired", "rejected", "replaced", "done_for_day", "stopped", "suspended")
 
 
+def _rest_headers() -> tuple[str, dict]:
+    s = get_settings()
+    base = "https://paper-api.alpaca.markets" if s.alpaca_paper else "https://api.alpaca.markets"
+    return base, {"APCA-API-KEY-ID": s.alpaca_api_key, "APCA-API-SECRET-KEY": s.alpaca_secret_key}
+
+
+def _rest_get(path: str, params: dict | None = None):
+    import httpx
+
+    base, headers = _rest_headers()
+    r = httpx.get(f"{base}{path}", params=params, headers=headers, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def _price(v) -> float | None:
+    """Net price magnitude. Alpaca reports a multi-leg entry as a NEGATIVE
+    filled_avg_price (credit) and a close as positive (debit); every caller
+    knows which side it is on, so the sign is dropped here, once."""
+    if v in (None, ""):
+        return None
+    return abs(float(v))
+
+
+def _order_from_json(o: dict) -> dict:
+    return {
+        "id": str(o.get("id")), "status": str(o.get("status", "")).lower(),
+        "filled_avg_price": _price(o.get("filled_avg_price")),
+        "filled_qty": int(float(o.get("filled_qty") or 0)),
+        "submitted_at": o.get("submitted_at"),
+        "legs": [{"symbol": leg.get("symbol"), "side": str(leg.get("side", "")).lower(),
+                  "filled_qty": int(float(leg.get("filled_qty") or 0)),
+                  "filled_avg_price": _price(leg.get("filled_avg_price"))}
+                 for leg in (o.get("legs") or [])],
+    }
+
+
 def order_status(order_id: str) -> dict:
     """{status, filled_avg_price (net, per share), filled_qty, legs} for one order.
-    Alpaca reports a multi-leg order's `filled_avg_price` as the NET debit or
-    credit (verified 4-Sep-2026: close of #20 limit 3.69 → buy 6.78 / sell 3.09
-    → 3.69)."""
-    o = _trading_client().get_order_by_id(order_id)
-    status = str(getattr(o.status, "value", o.status)).lower()
-    fap = getattr(o, "filled_avg_price", None)
-    return {
-        "id": str(o.id), "status": status,
-        "filled_avg_price": float(fap) if fap is not None else None,
-        "filled_qty": int(float(o.filled_qty or 0)),
-        "legs": [{"symbol": leg.symbol, "side": str(getattr(leg.side, "value", leg.side)),
-                  "filled_avg_price": float(leg.filled_avg_price) if leg.filled_avg_price is not None else None}
-                 for leg in (o.legs or [])],
-    }
+
+    Plain REST, not the typed client: on 8-Sep-2026 Alpaca returned the mleg
+    parent with `asset_id: ""`, `side: ""` and legs with `order_class: "mleg"`,
+    and alpaca-py 0.33's `Order` model raised 6 validation errors AFTER the
+    order had filled — four spreads were opened at the broker and none in
+    the DB. Alpaca reports a multi-leg order's `filled_avg_price` as the NET
+    debit or credit (verified 4-Sep-2026: close of #20 limit 3.69 → buy 6.78 /
+    sell 3.09 → 3.69); see `_price` for the sign."""
+    return _order_from_json(_rest_get(f"/v2/orders/{order_id}"))
 
 
 def cancel_order(order_id: str) -> bool:
@@ -466,30 +498,19 @@ def broker_option_positions() -> dict[str, int]:
     return out
 
 
-def _order_dict(o) -> dict:
-    return {
-        "id": str(o.id), "status": str(getattr(o.status, "value", o.status)).lower(),
-        "filled_avg_price": float(o.filled_avg_price) if getattr(o, "filled_avg_price", None) is not None else None,
-        "submitted_at": o.submitted_at.isoformat() if getattr(o, "submitted_at", None) else None,
-        "legs": [{"symbol": leg.symbol, "side": str(getattr(leg.side, "value", leg.side)).lower(),
-                  "filled_qty": int(float(leg.filled_qty or 0))} for leg in (o.legs or [])],
-    }
-
-
 def orders_for_symbols(symbols: list[str], since_days: int = 10) -> list[dict]:
     """Every order (any status) touching these option symbols in the window — the
-    reconciler's evidence. A multi-leg order is returned once, with its legs."""
+    reconciler's evidence. A multi-leg order is returned once, with its legs.
+    Plain REST for the same reason as `order_status`."""
     from datetime import datetime, timedelta, timezone
-
-    from alpaca.trading.enums import QueryOrderStatus
-    from alpaca.trading.requests import GetOrdersRequest
 
     if not symbols:
         return []
-    after = datetime.now(timezone.utc) - timedelta(days=since_days)
+    after = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    raw = _rest_get("/v2/orders", {"status": "all", "symbols": ",".join(sorted(set(symbols))), "after": after, "limit": 500})
     seen, out = set(), []
-    for o in _trading_client().get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL, symbols=sorted(set(symbols)), after=after, limit=500)):
-        d = _order_dict(o)
+    for o in raw:
+        d = _order_from_json(o)
         if d["id"] not in seen:
             seen.add(d["id"])
             out.append(d)
