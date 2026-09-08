@@ -178,6 +178,28 @@ function _weekKey(iso){  // Monday of that ISO date's week, as YYYY-MM-DD
   dt.setUTCDate(dt.getUTCDate()-((dt.getUTCDay()+6)%7));
   return dt.toISOString().slice(0,10);
 }
+// Weekdays inside the week with no equity points (market holiday, e.g. Labor
+// Day 7-Sep-2026) get a FLAT run carried from the last known equity, so the
+// week reads Mon→today instead of silently skipping the day. Only past days
+// are filled — today is never synthetic. Points are tagged `flat:true`.
+function _fillClosedDays(pts, mondayIso, todayIso){
+  const have=new Set(pts.map(_dOf));
+  const out=pts.slice();
+  const [Y,M,D]=mondayIso.split('-').map(Number);
+  for(let k=0;k<5;k++){
+    const dt=new Date(Date.UTC(Y,M-1,D+k)); const iso=dt.toISOString().slice(0,10);
+    if(iso>=todayIso || have.has(iso)) continue;
+    const before=_eqIntra.filter(p=>_dOf(p)<iso);
+    const prev = before.length ? before[before.length-1]
+               : _eqDaily.filter(p=>_dOf(p)<iso).slice(-1)[0];
+    if(!prev) continue;                       // nothing to carry (first week ever)
+    for(let i=0;i<20;i++){                    // ~a band's worth of x-space
+      const hh=String(14+Math.floor(i*6/20)).padStart(2,'0'), mm=String((i*18)%60).padStart(2,'0');
+      out.push({ts:`${iso}T${hh}:${mm}:00+00:00`, equity:prev.equity, cash:prev.cash, flat:true});
+    }
+  }
+  return out.sort((a,b)=>(a.ts||a.date).localeCompare(b.ts||b.date));
+}
 function spark(pts){
   const svg=$('spark'); svg.innerHTML='';
   if(!pts||pts.length<2){ return; }
@@ -202,7 +224,9 @@ function spark(pts){
     if(k%2===0) bands+=`<rect x="${left.toFixed(1)}" y="0" width="${(right-left).toFixed(1)}" height="${Hc}" fill="rgba(61,186,140,.06)"/>`;
     if(k>0) bands+=`<line x1="${left.toFixed(1)}" y1="0" x2="${left.toFixed(1)}" y2="${Hc}" stroke="var(--line)" stroke-dasharray="3 4"/>`;
     if(right-left>=34){
-      const p=s.key.split('-'); const lab=`${byWeek?'sem ':''}${+p[2]} ${MES[+p[1]-1]}`;
+      const p=s.key.split('-');
+      const closed = !byWeek && pts.slice(s.a,s.b+1).every(q=>q.flat);
+      const lab=`${byWeek?'sem ':''}${+p[2]} ${MES[+p[1]-1]}${closed?' · closed':''}`;
       bands+=`<text class="daylab" x="${((left+right)/2).toFixed(1)}" y="${labelY}" text-anchor="middle">${lab}</text>`;
     }
   });
@@ -236,8 +260,9 @@ function drawEquity(){
     // weekend or a market holiday the chart must not keep showing last week.
     // Only when the current week has no data yet (weekend, Monday holiday) fall
     // back to the most recent week that has points.
-    const mon=_weekKey(new Date().toISOString().slice(0,10));
+    const today=new Date().toISOString().slice(0,10), mon=_weekKey(today);
     pts=_eqIntra.filter(p=>_dOf(p)>=mon);
+    if(pts.length) pts=_fillClosedDays(pts, mon, today);
     if(!pts.length){
       const lastMon=_weekKey(_dOf(_eqIntra[_eqIntra.length-1]));
       pts=_eqIntra.filter(p=>_dOf(p)>=lastMon);

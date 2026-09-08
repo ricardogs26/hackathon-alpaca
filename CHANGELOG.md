@@ -5,6 +5,15 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.11.3 — 2026-09-08
+
+- **Weekdays without a session show as a flat run in the 5D view.** A market
+  holiday inside the week (Labor Day 7-Sep) had no equity snapshots, so the
+  week jumped from Friday to Tuesday. The dashboard now carries the last known
+  equity across that day as synthetic points (tagged, band labelled
+  `· closed`); today is never synthetic and the API data is untouched.
+- Heartbeat CronJob image aligned with the release.
+
 ## 0.11.2 — 2026-09-08
 
 - **The 5D equity view anchors to the Monday of today's week.** It used the
