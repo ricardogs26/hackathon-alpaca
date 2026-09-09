@@ -77,24 +77,37 @@ LIVE = ("open", "closing", "pending")   # statuses that count as exposure for th
 def record_position(spread: VerticalSpread, contracts: int, order_id: str | None,
                     status: str = "open", fill_credit: float | None = None) -> int:
     """status 'open' when the entry filled (fill_credit = the net credit actually
-    received), 'pending' while the entry order is still working."""
+    received), 'pending' while the entry order is still working.
+
+    0.14.1: when the fill is known it IS the credit (`credit` = fill, max_loss
+    recomputed): every exit rule, tick and P&L reasons about the credit column,
+    and with the entry ladder a fill can sit well under the mid the spread was
+    priced at (NVDA 9-Sep: mid 0.46, fill 0.37 -> "28% captured" that was 11%)."""
+    credit = float(fill_credit) if fill_credit is not None else float(spread.credit)
+    max_loss = (spread.max_loss + (float(spread.credit) - credit) * 100) * contracts
     with _conn() as c:
         row = c.execute(
             "INSERT INTO positions (underlying,expiry,option_right,short_symbol,long_symbol,contracts,credit,max_loss,"
             " order_id,status,fill_credit,pending_order_id,pending_since)"
             " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,CASE WHEN %s='pending' THEN now() END) RETURNING id",
             (spread.underlying, spread.expiry, spread.right.value, spread.short_leg.symbol,
-             spread.long_leg.symbol, contracts, spread.credit, spread.max_loss * contracts, order_id,
+             spread.long_leg.symbol, contracts, credit, round(max_loss, 2), order_id,
              status, fill_credit, order_id if status == "pending" else None, status),
         ).fetchone()
         return row[0]
 
 
 def confirm_fill(position_id: int, fill_credit: float | None) -> None:
-    """A pending entry filled: it is open from here."""
+    """A pending entry filled: it is open from here, and the fill is the credit
+    (max_loss grows by what the fill gave up against the mid)."""
     with _conn() as c:
-        c.execute("UPDATE positions SET status='open', fill_credit=%s, pending_order_id=NULL, pending_since=NULL WHERE id=%s",
-                  (fill_credit, position_id))
+        if fill_credit is None:
+            c.execute("UPDATE positions SET status='open', pending_order_id=NULL, pending_since=NULL WHERE id=%s",
+                      (position_id,))
+            return
+        c.execute("UPDATE positions SET status='open', fill_credit=%s, pending_order_id=NULL, pending_since=NULL,"
+                  " max_loss = max_loss + (credit - %s) * 100 * contracts, credit = %s WHERE id=%s",
+                  (fill_credit, fill_credit, fill_credit, position_id))
 
 
 def mark_unfilled(position_id: int, reason: str) -> None:

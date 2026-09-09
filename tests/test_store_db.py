@@ -52,7 +52,7 @@ def test_schema_is_idempotent(db):
 def test_open_close_with_fills(db):
     pid = db.record_position(_spread(), 8, "ord-1", status="open", fill_credit=1.10)
     row = db.get_positions()[0]
-    assert row["status"] == "open" and row["fill_credit"] == 1.10 and row["max_loss"] == pytest.approx(3.93 * 100 * 8)
+    assert row["status"] == "open" and row["fill_credit"] == 1.10 and row["max_loss"] == pytest.approx((5 - 1.10) * 100 * 8)  # 0.14.1: the fill is the credit
     db.close_position(pid, -100.0, "stop (short delta 0.46 >= 0.45)", fill_exit_price=1.225)
     row = db.get_positions()[0]
     assert row["status"] == "closed" and row["fill_exit_price"] == 1.225 and row["realized_pnl"] == -100.0
@@ -258,3 +258,27 @@ def test_reconciler_store_ops(db):
     db.log_reconcile("adopt", a, ("SPY990109C00769000", "SPY990109C00774000"), "entry e1 filled", "#adopted")
     db.log_reconcile("human", None, ("X",), "unknown", None)
     assert db.auto_fixes_today() == 1 and len(db.reconcile_log()) == 2 and db.reconcile_log()[0]["kind"] == "human"
+
+
+# ── 0.14.1: the fill IS the credit the exits reason about ────────────────────
+def test_open_fill_becomes_the_credit_and_max_loss(db):
+    # mid 1.07 on a 5-wide -> max_loss 393/contract; filled at 0.97 -> 403/contract
+    pid = db.record_position(_spread(credit=1.07), 2, "ord-1", status="open", fill_credit=0.97)
+    row = next(p for p in db.get_positions(50) if p["id"] == pid)
+    assert row["credit"] == 0.97 and row["fill_credit"] == 0.97
+    assert abs(row["max_loss"] - (5 - 0.97) * 100 * 2) < 0.01
+
+
+def test_confirmed_fill_becomes_the_credit_and_max_loss(db):
+    pid = db.record_position(_spread(credit=1.07), 2, "ord-p", status="pending")
+    db.confirm_fill(pid, 0.90)
+    row = next(p for p in db.get_positions(50) if p["id"] == pid)
+    assert row["status"] == "open" and row["credit"] == 0.90
+    assert abs(row["max_loss"] - (5 - 0.90) * 100 * 2) < 0.01
+
+
+def test_fill_without_price_keeps_the_mid(db):
+    pid = db.record_position(_spread(credit=1.07), 1, "ord-x", status="pending")
+    db.confirm_fill(pid, None)
+    row = next(p for p in db.get_positions(50) if p["id"] == pid)
+    assert row["credit"] == 1.07 and row["fill_credit"] is None

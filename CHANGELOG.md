@@ -5,6 +5,19 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.14.1 — 2026-09-09 · the fill is the credit
+
+First ladder fill in production: NVDA bear call priced at 0.46 mid, filled at
+0.37 on the last rung. The exits read `credit` (0.46) and showed 28 % captured
+on a position that had captured 11 %; the stop, the take-profit and the trail
+were all measured against money never received. This was latent since day one
+(every entry had filled under the mid, up to 0.21 on QQQ 1-Sep) and the ladder
+made it visible.
+
+- `record_position` (open with a fill) and `confirm_fill` set `credit` to the
+  fill and recompute `max_loss` by what the fill gave up against the mid. The
+  decision row keeps the mid the spread was priced at.
+
 ## 0.14.0 — 2026-09-09 · entry limit ladder: mid → mid−step → natural
 
 With the limit finally honoured (0.13.0), the first two entries of 9-Sep never
