@@ -5,6 +5,23 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.13.0 — 2026-09-09 · the entry limit was never a limit; the breaker weighs the streak
+
+Analysis of the 8-Sep session (four positions, four flatten closes, −$156):
+
+- **Entry limit sign.** Alpaca's multi-leg `limit_price` is signed: positive is
+  a net debit, negative a net credit. The entry sent the credit as a positive
+  number ("pay up to 0.60"), which any credit satisfies, so all 21 entries since
+  1-Sep filled at market — several BELOW their limit (QQQ 1.43 → 1.22, AAPL
+  0.60 → 0.56). Now `_build_mleg_args` sends `--limit-price=-<credit>`; an
+  entry the market does not meet rests, goes `pending` and is cancelled at 120 s
+  instead of filling worse. Closes were already right (positive = debit).
+- **Breaker magnitude floor** `breaker_min_loss_pct` (0.005): the losing streak
+  pauses trading only if it also cost ≥ 0.5 % of equity. Four −$16..−$64 closes
+  (0.17 %) had paused the whole next session like the −$9k streak of 3-Sep.
+  `PolicyState.streak_loss_usd` carries the $ of the leading run; unknown means
+  the count alone trips (conservative).
+
 ## 0.12.1 — 2026-09-08 · four fills the DB never saw
 
 At 15:38 UTC the first entries of the day filled at the broker (IWM bear call,

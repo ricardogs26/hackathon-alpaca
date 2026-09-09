@@ -328,12 +328,18 @@ def _build_mleg_args(spread: VerticalSpread, contracts: int, limit_price: float)
             "position_intent": "buy_to_open",
         },
     ]
+    # Alpaca mleg limit sign is semantic: positive = net DEBIT, negative = net
+    # CREDIT. `limit_price` here is the credit magnitude; sent positive it read
+    # as "pay up to X", which any credit satisfies, so every entry filled at
+    # market (21/21 orders 1-Sep..8-Sep, several BELOW the limit). `=` form so
+    # the CLI never parses "-0.70" as a flag.
+    credit = -abs(float(limit_price))
     return [
         ALPACA_CLI, "order", "submit",
         "--order-class", "mleg",
         "--qty", str(contracts),
         "--type", "limit",
-        "--limit-price", f"{limit_price:.2f}",
+        f"--limit-price={credit:.2f}",
         "--time-in-force", "day",
         "--legs", json.dumps(legs),
     ]

@@ -4,7 +4,7 @@ counter drives the circuit breaker, so its edge cases are worth pinning.
 """
 from __future__ import annotations
 
-from optionwright.storage.store import _consecutive_losses, _summarize_outcomes, _summarize_book
+from optionwright.storage.store import _consecutive_losses, _streak_loss_usd, _summarize_outcomes, _summarize_book
 
 
 def test_no_trades():
@@ -92,3 +92,11 @@ def test_recent_pnls_keeps_only_the_window_and_the_streak_ends_with_it():
     assert _consecutive_losses(_recent_pnls(rows, now, 1.0)) == 0       # nothing closed in the last hour
     assert _consecutive_losses(_recent_pnls(rows, now, 100.0)) == 4     # the old behaviour, if wanted
     assert _recent_pnls([(1.0, None)], now, 24.0) == []
+
+
+def test_streak_loss_is_the_sum_of_the_leading_run():
+    assert _streak_loss_usd([]) == 0.0
+    assert _streak_loss_usd([-10, -20, 30, -5]) == 30.0     # the run stops at the win
+    assert _streak_loss_usd([50, -30]) == 0.0               # a win at the head: no streak
+    assert _streak_loss_usd([-10, None, -20]) == 10.0       # unknown P&L ends the run
+    assert _streak_loss_usd([-48, -28, -16, -64]) == 156.0  # 8-Sep-2026

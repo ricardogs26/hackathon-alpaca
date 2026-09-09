@@ -40,6 +40,7 @@ class RuleSet:
     max_per_group: int = 2
     group_cooldown_seconds: float = 1800.0
     breaker_lookback_hours: float = 24.0
+    breaker_min_loss_pct: float = 0.005   # the streak must also cost this share of equity
 
     @classmethod
     def from_params(cls, params, underlying: str | None = None, group: str | None = None) -> "RuleSet":
@@ -54,6 +55,7 @@ class RuleSet:
             max_daily_loss_pct=g("max_daily_loss_pct"), no_entry_minutes_before_close=g("no_entry_minutes_before_close"),
             max_per_group=g("max_per_group"), group_cooldown_seconds=g("group_cooldown_seconds"),
             breaker_lookback_hours=g("breaker_lookback_hours"),
+            breaker_min_loss_pct=g("breaker_min_loss_pct"),
         )
 
 
@@ -76,6 +78,7 @@ class PolicyState:
     # phase 2: correlation groups
     open_positions_group: int = 0                      # open spreads on any symbol of THIS spread's group
     seconds_since_group_trade: float | None = None     # None = the group never traded
+    streak_loss_usd: float | None = None               # $ lost by the leading losing run (None = unknown -> count alone trips)
     open_short_strikes: frozenset = frozenset()        # "SPY|C|769.0" of open spreads
 
 
@@ -124,8 +127,13 @@ def evaluate(
         return Verdict(False, 0, f"low confidence {confidence:.2f} < {rules.min_confidence:.2f}")
 
     # 1 — Consecutive-loss breaker (hard stop, first so nothing slips through).
+    # The count alone is not enough: 8-Sep-2026 four flatten closes of -$16..-$64
+    # (0.17% of equity) paused the next day like the -$9k streak of 3-Sep did.
     if state.consecutive_losses >= rules.max_consecutive_losses:
-        return Verdict(False, 0, f"circuit breaker: {state.consecutive_losses} consecutive losses")
+        floor = state.equity * rules.breaker_min_loss_pct
+        if state.streak_loss_usd is None or state.streak_loss_usd >= floor:
+            hurt = "" if state.streak_loss_usd is None else f", ${state.streak_loss_usd:.0f} >= ${floor:.0f}"
+            return Verdict(False, 0, f"circuit breaker: {state.consecutive_losses} consecutive losses{hurt}")
 
     # 1b — Daily loss pause: after losing this much today, no new entries (3-Sep: −8% in a day).
     daily_loss_cap = state.equity * rules.max_daily_loss_pct

@@ -24,7 +24,7 @@ contracts and the shrinking gates bring it down.
 | # | Gate | Parameter (default) | Vetoes / shrinks when |
 |---|------|---------------------|-----------------------|
 | 0 | Confidence | `min_confidence` (0.60) | the LLM's confidence is below the floor |
-| 1 | Consecutive-loss breaker | `max_consecutive_losses` (3) / `breaker_lookback_hours` (24) | this many losing trades in a row among those closed in the last 24 h (without the window a streak could never end: nothing opens, so nothing can win) |
+| 1 | Consecutive-loss breaker | `max_consecutive_losses` (3) / `breaker_lookback_hours` (24) / `breaker_min_loss_pct` (0.005) | this many losing trades in a row among those closed in the last 24 h **and** the streak cost at least 0.5 % of equity (without the window a streak could never end; without the floor four −$39 flatten closes paused a whole day, 8-Sep-2026) |
 | 1b | Daily-loss pause | `max_daily_loss_pct` (0.02) | realized loss today ≥ 2 % of equity |
 | 2 | Open-positions cap | `max_open_positions` (6) | that many spreads already open |
 | 2b | Per-underlying cap | `max_per_underlying` (2) | that many open on this symbol |
@@ -121,7 +121,7 @@ expire after 3 days.
 
 | Step | Rule |
 |------|------|
-| Entry | submit at the spread's net credit; wait `ENTRY_FILL_WAIT_S` (10 s). Filled → open with the net credit received. Terminally unfilled → no position. Still working → `pending` (counts as exposure); confirmed or cancelled (`ENTRY_ORDER_MAX_AGE_S`, 120 s) by the next exits pass |
+| Entry | submit at the spread's net credit as a **negative** mleg limit (Alpaca: positive = net debit, negative = net credit — sent positive, every entry filled at market until 8-Sep-2026); wait `ENTRY_FILL_WAIT_S` (10 s). Filled → open with the net credit received. Terminally unfilled → no position. Still working → `pending` (counts as exposure); confirmed or cancelled (`ENTRY_ORDER_MAX_AGE_S`, 120 s) by the next exits pass |
 | Condor | the second wing is placed only after the first fills; a second wing that does not fill leaves the first standing as the directional spread it already passed the gates as, and the decision says so |
 | Close | submit at mid + `CLOSE_LIMIT_STEP` (0.05) × (attempts + 1), at most `CLOSE_LIMIT_MAX_STEPS` (6); wait `CLOSE_FILL_WAIT_S` (5 s). Filled → closed, P&L from the fills. Still working → `closing`, resolved next pass. Unfilled or older than `CLOSE_ORDER_MAX_AGE_S` (60 s) → cancelled, `open` again, retried wider next tick |
 | Reconciliation | every exits pass, DB legs (open + closing) vs the broker's option positions. A mismatch is handed to the **automated reconciler**, which makes the DB match the broker from the broker's evidence (closing order filled → close at the fill; both legs expired → close at 0; partial → adjust quantity; unknown spread with the agent's filled entry → adopt/reactivate) and **never places an order**. Naked legs (assignment, single leg) and unexplained legs go to a person, urgently. Entries stay blocked until the books agree; at most 5 automatic fixes a day |

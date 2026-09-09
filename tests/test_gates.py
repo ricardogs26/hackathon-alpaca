@@ -32,6 +32,30 @@ def test_consecutive_loss_breaker_vetoes():
     assert "breaker" in v.reason
 
 
+def test_breaker_ignores_a_streak_of_tiny_losses():
+    # 8-Sep-2026: four flatten closes of -$16..-$64 (0.17% of equity) paused the
+    # whole next day like the -$9k streak of 3-Sep. The streak must also hurt.
+    v = evaluate(_spread(), 1, _state(consecutive_losses=4, streak_loss_usd=156.0))
+    assert v.approved and v.contracts == 1
+
+
+def test_breaker_trips_when_the_streak_hurts():
+    v = evaluate(_spread(), 1, _state(consecutive_losses=3, streak_loss_usd=600.0))  # 0.6% >= 0.5%
+    assert not v.approved and "breaker" in v.reason and "$600" in v.reason
+
+
+def test_breaker_unknown_magnitude_still_trips():
+    # None = magnitude unknown -> the count alone decides (conservative).
+    v = evaluate(_spread(), 1, _state(consecutive_losses=3, streak_loss_usd=None))
+    assert not v.approved
+
+
+def test_breaker_floor_is_a_rule():
+    rules = RuleSet(breaker_min_loss_pct=0.001)   # 0.1% of 100k = $100
+    v = evaluate(_spread(), 1, _state(consecutive_losses=3, streak_loss_usd=156.0), rules)
+    assert not v.approved
+
+
 def test_open_positions_cap_vetoes():
     v = evaluate(_spread(), 1, _state(open_positions=6))
     assert not v.approved and "cap" in v.reason

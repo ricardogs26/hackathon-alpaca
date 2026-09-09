@@ -491,6 +491,17 @@ def _consecutive_losses(realized_pnls_desc: list[float]) -> int:
     return n
 
 
+def _streak_loss_usd(realized_pnls_desc: list[float]) -> float:
+    """Dollars lost by the leading run of losing trades (the streak the breaker counts)."""
+    total = 0.0
+    for pnl in realized_pnls_desc:
+        if pnl is not None and pnl < 0:
+            total += -float(pnl)
+        else:
+            break
+    return total
+
+
 def _summarize_outcomes(rows: list[dict]) -> dict:
     """Resumen de trades cerrados por dirección (call=bajista, put=alcista)."""
     closed = [r for r in rows if r.get("realized_pnl") is not None]
@@ -680,10 +691,12 @@ def build_policy_state(
     net_delta = _net_delta_usd(open_rows, latest_ticks([r["id"] for r in open_rows]))
     open_in_group = sum(1 for r in open_rows if r["underlying"].upper() in peers)
     short_strikes = frozenset(_short_strike_key(r["underlying"], r["short_symbol"]) for r in open_rows)
+    recent = _recent_pnls(pnls, _now(), lookback_hours)
     return PolicyState(
         equity=equity,
         open_positions=int(open_positions),
-        consecutive_losses=_consecutive_losses(_recent_pnls(pnls, _now(), lookback_hours)),
+        consecutive_losses=_consecutive_losses(recent),
+        streak_loss_usd=_streak_loss_usd(recent),
         premium_at_risk_today=float(at_risk),
         open_positions_underlying=int(open_underlying),
         seconds_since_symbol_trade=float(last[0]) if last else None,

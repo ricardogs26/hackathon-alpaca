@@ -32,8 +32,24 @@ def test_argv_has_mleg_class_and_limit():
     assert "mleg" in argv
     assert argv[argv.index("--qty") + 1] == "2"
     assert argv[argv.index("--type") + 1] == "limit"
-    assert argv[argv.index("--limit-price") + 1] == "0.70"
+    # Alpaca mleg: a NEGATIVE limit is a net credit (positive = net debit). A
+    # positive 0.70 meant "pay up to 0.70" and filled at market (8-Sep-2026).
+    assert "--limit-price=-0.70" in argv
+    assert "--limit-price" not in argv
     assert argv[argv.index("--time-in-force") + 1] == "day"
+
+
+def test_entry_limit_is_always_a_credit():
+    # The magnitude is the credit; whichever sign the caller passes, the CLI gets a credit.
+    for given in (0.70, -0.70):
+        argv = _build_mleg_args(_bull_put(), contracts=1, limit_price=given)
+        assert "--limit-price=-0.70" in argv
+
+
+def test_close_limit_is_a_debit():
+    from optionwright.broker.alpaca import _build_mleg_close_args
+    argv = _build_mleg_close_args("SPY260831P00767000", "SPY260831P00762000", contracts=2, limit_price=0.40)
+    assert argv[argv.index("--limit-price") + 1] == "0.40"
 
 
 def test_legs_json_shape():
