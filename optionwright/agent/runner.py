@@ -22,7 +22,7 @@ import time
 from optionwright.agent import perception
 from optionwright.agent.analyzer import propose
 from optionwright.agent.exits import ExitParams, decide_exit
-from optionwright.agent.loop import Deps, run_cycle
+from optionwright.agent.loop import Deps, EntryLadder, run_cycle
 from optionwright.agent.state import compute_tick, position_clock
 from optionwright import reconcile, reconciler
 from optionwright.broker import alpaca
@@ -531,6 +531,8 @@ def _build_deps(params: Params, underlying: str) -> Deps:
         note_regime=store.note_regime,
         wait_fill=lambda oid: alpaca.wait_for_fill(oid, s.entry_fill_wait_s),
         cancel_order=alpaca.cancel_order,
+        requote=lambda sp: alpaca.spread_quotes(sp.short_leg.symbol, sp.long_leg.symbol),
+        entry_ladder=EntryLadder(step=s.entry_limit_step, max_steps=s.entry_limit_max_steps),
         rich_context=s.agent_rich_context,
     )
 

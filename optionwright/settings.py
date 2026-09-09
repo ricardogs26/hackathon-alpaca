@@ -112,6 +112,8 @@ class Settings(BaseSettings):
     # ── Order lifecycle (tech-debt 1.1) ──────────────────────────────────────
     entry_fill_wait_s: float = Field(default=10.0, alias="ENTRY_FILL_WAIT_S")        # wait this long for an entry to fill
     entry_order_max_age_s: float = Field(default=120.0, alias="ENTRY_ORDER_MAX_AGE_S")  # then cancel a pending entry
+    entry_limit_step: float = Field(default=0.02, alias="ENTRY_LIMIT_STEP")            # 0.14.0 ladder: mid -> mid-step -> natural
+    entry_limit_max_steps: int = Field(default=2, alias="ENTRY_LIMIT_MAX_STEPS")       # rungs after the mid; 0 = single shot
     close_fill_wait_s: float = Field(default=5.0, alias="CLOSE_FILL_WAIT_S")
     close_order_max_age_s: float = Field(default=60.0, alias="CLOSE_ORDER_MAX_AGE_S")   # then cancel and retry wider
     close_limit_step: float = Field(default=0.05, alias="CLOSE_LIMIT_STEP")            # limit = price + step × (attempts + 1)

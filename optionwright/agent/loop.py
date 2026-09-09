@@ -33,6 +33,35 @@ def _safe(fn) -> dict:
         return {}
 
 
+@dataclass(frozen=True)
+class EntryLadder:
+    """Entry limit ladder (0.14.0): mid -> mid-step -> ... -> natural, one fill
+    wait per rung. 9-Sep-2026: with the limit finally honoured (0.13.0) an entry
+    at the mid never filled on paper — Alpaca fills a multi-leg only when it is
+    marketable (credit <= short bid - long ask). max_steps=0 = single shot at mid."""
+    step: float = 0.02
+    max_steps: int = 2
+
+
+def ladder_price(k: int, last: int, prev: float, mid_now: float | None, natural_now: float | None,
+                 step: float) -> float:
+    """Limit credit for rung k (0 = the spread's own credit, `prev`). Middle rungs
+    walk down from the CURRENT mid, floored at the natural credit and never above
+    the previous rung (a rising market is not chased). The last rung is the natural
+    credit itself, the price the market is showing right now. Unknown quotes: keep
+    stepping down from the previous rung. Never below one cent."""
+    if k <= 0:
+        return round(prev, 2)
+    if k >= last:
+        px = natural_now if natural_now is not None else (mid_now - step * k if mid_now is not None else prev - step)
+    else:
+        px = mid_now - step * k if mid_now is not None else prev - step
+        if natural_now is not None:
+            px = max(px, natural_now)
+    px = min(px, prev)
+    return round(max(0.01, px), 2)
+
+
 @dataclass
 class Deps:
     account: Callable[[], tuple[float, float]]                 # -> (equity, cash)
@@ -40,7 +69,7 @@ class Deps:
     fetch_chain: Callable[[str, str, Right], list]             # (underlying, expiry, right) -> [OptionQuote]
     propose: Callable[[dict], Proposal]
     build_state: Callable[[str, float], PolicyState]           # (underlying, equity) -> PolicyState
-    submit_spread: Callable[[VerticalSpread, int], dict]       # -> order json
+    submit_spread: Callable[..., dict]                         # (spread, n[, limit_credit]) -> order json
     record_decision: Callable[..., None]
     record_position: Callable[[VerticalSpread, int, str | None], int]
     save_equity: Callable[[float, float], None]
@@ -54,6 +83,8 @@ class Deps:
     note_regime: Callable[[int, str | None], None] = None   # (position_id, regime) -> None; phase 4 buckets
     wait_fill: Callable[[str], dict] = None          # (order_id) -> {status, filled_avg_price}; None = assume filled (tests)
     cancel_order: Callable[[str], bool] = None
+    requote: Callable[[VerticalSpread], tuple[float | None, float | None]] = None   # -> (mid_now, natural_now)
+    entry_ladder: EntryLadder | None = None          # None = single shot at the spread's credit
 
 
 def _candidate_summary(spread: VerticalSpread | None) -> dict | None:
@@ -92,20 +123,45 @@ def _place(deps: Deps, spread: VerticalSpread, n: int) -> tuple[int | None, str,
     still working: the exits pass will confirm or cancel it; it counts as
     exposure meanwhile) or 'unfilled' (no position, no money moved).
     """
-    order = deps.submit_spread(spread, n)
-    order_id = order.get("id") if isinstance(order, dict) else None
-    if deps.wait_fill is None or not order_id:
-        return deps.record_position(spread, n, order_id), "filled", None, order_id
-    try:
-        st = deps.wait_fill(order_id)
-    except Exception as exc:
-        # The order is already at the broker. Whatever broke the status read
-        # (8-Sep-2026: alpaca-py could not parse the mleg response after four
-        # fills), the position must exist in the DB so the exits pass and the
-        # reconciler own it — an unrecorded fill is an unmanaged position.
-        logger.error("fill status for %s unreadable (%s); recording as pending", order_id, exc)
-        return deps.record_position(spread, n, order_id, status="pending"), "pending", {"status": "unknown"}, order_id
-    status = str(st.get("status", "")).lower()
+    ladder = deps.entry_ladder
+    last = ladder.max_steps if (ladder and deps.requote is not None and deps.cancel_order is not None) else 0
+    price = round(float(spread.credit), 2)
+    order_id, st, status = None, None, ""
+    for k in range(last + 1):
+        if k > 0:
+            try:
+                mid_now, natural_now = deps.requote(spread)
+            except Exception as exc:  # a failed quote never stops the walk down
+                logger.warning("requote %s failed (%s); stepping down blind", spread.underlying, exc)
+                mid_now, natural_now = None, None
+            price = ladder_price(k, last, price, mid_now, natural_now, ladder.step)
+            logger.info("entry ladder %s rung %d/%d @ %.2f (mid %s, natural %s)", spread.underlying, k, last,
+                        price, mid_now, natural_now)
+        order = deps.submit_spread(spread, n, price) if last else deps.submit_spread(spread, n)
+        order_id = order.get("id") if isinstance(order, dict) else None
+        if deps.wait_fill is None or not order_id:
+            return deps.record_position(spread, n, order_id), "filled", None, order_id
+        try:
+            st = deps.wait_fill(order_id)
+        except Exception as exc:
+            # The order is already at the broker. Whatever broke the status read
+            # (8-Sep-2026: alpaca-py could not parse the mleg response after four
+            # fills), the position must exist in the DB so the exits pass and the
+            # reconciler own it — an unrecorded fill is an unmanaged position.
+            logger.error("fill status for %s unreadable (%s); recording as pending", order_id, exc)
+            return deps.record_position(spread, n, order_id, status="pending"), "pending", {"status": "unknown"}, order_id
+        status = str(st.get("status", "")).lower()
+        if status == "filled":
+            break
+        if status in _TERMINAL_UNFILLED:
+            continue   # the broker dropped it: next rung (or unfilled after the last)
+        if k < last:
+            # Still working at this rung: pull it and re-read — a fill can race the cancel.
+            deps.cancel_order(order_id)
+            st = deps.wait_fill(order_id)
+            status = str(st.get("status", "")).lower()
+            if status == "filled":
+                break
     if status == "filled":
         return deps.record_position(spread, n, order_id, status="open", fill_credit=st.get("filled_avg_price")), "filled", st, order_id
     if status in _TERMINAL_UNFILLED:

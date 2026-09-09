@@ -6,7 +6,7 @@ reaches the (fake) broker. No Alpaca, no LLM, no Postgres.
 from __future__ import annotations
 
 from optionwright.agent.analyzer import Proposal
-from optionwright.agent.loop import Deps, run_cycle
+from optionwright.agent.loop import Deps, run_cycle, EntryLadder, ladder_price
 from optionwright.options.models import Direction, OptionQuote, Right
 from optionwright.policy.gates import PolicyState
 
@@ -356,3 +356,81 @@ def test_pre_model_decisions_carry_no_context():
     deps.fetch_chain = lambda u, e, r: []
     run_cycle("SPY", deps)
     assert "context" not in rec.decisions[-1][1]
+
+
+# ── 0.14.0: entry limit ladder mid -> mid-step -> natural ────────────────────
+
+
+def test_ladder_price_walks_from_mid_to_natural_never_up():
+    # step 0 is the credit the spread was priced at (mid at decision time)
+    assert ladder_price(0, 2, 0.88, 0.88, 0.85, 0.02) == 0.88
+    # middle step: mid_now - step, floored at natural, never above the previous limit
+    assert ladder_price(1, 2, 0.88, 0.88, 0.85, 0.02) == 0.86
+    assert ladder_price(1, 2, 0.88, 0.95, 0.85, 0.02) == 0.88     # market moved up: don't chase above prev
+    assert ladder_price(1, 2, 0.88, 0.86, 0.85, 0.02) == 0.85     # mid fell: floor at natural
+    # last step is the natural credit (the marketable price)
+    assert ladder_price(2, 2, 0.86, 0.88, 0.85, 0.02) == 0.85
+    # unknown quotes: keep stepping down from the previous limit, never below a cent
+    assert ladder_price(1, 2, 0.88, None, None, 0.02) == 0.86
+    assert ladder_price(2, 2, 0.86, None, None, 0.02) == 0.84
+    assert ladder_price(2, 2, 0.01, None, None, 0.02) == 0.01
+
+
+def _with_ladder(rec, proposal, statuses, requote=(0.88, 0.85)):
+    """wait_fill answers `statuses` in order (one per submit); submits record their price."""
+    deps = _rich(rec.deps(proposal))
+    prices, canceled, recorded = [], [], []
+    deps.submit_spread = lambda sp, n, price=None: prices.append(price) or {"id": f"ord-{len(prices)}"}
+    answers = iter(statuses)
+    deps.wait_fill = lambda oid: {"id": oid, "status": next(answers), "filled_avg_price": 0.85}
+    deps.cancel_order = lambda oid: canceled.append(oid) or True
+    deps.requote = lambda sp: requote
+    deps.entry_ladder = EntryLadder(step=0.02, max_steps=2)
+    deps.record_position = lambda sp, n, oid, status="open", fill_credit=None: recorded.append((status, fill_credit, oid)) or 7
+    return deps, prices, canceled, recorded
+
+
+def test_ladder_fills_on_the_last_step_at_natural():
+    rec = _Recorder()
+    # new (10s at mid) -> cancel -> canceled ; new at mid-step -> cancel -> canceled ; filled at natural
+    deps, prices, canceled, recorded = _with_ladder(
+        rec, Proposal(Direction.BULLISH, 0.9, "up"), ["new", "canceled", "new", "canceled", "filled"])
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "opened" and res["fill"] == "filled"
+    assert prices[1:] == [0.86, 0.85] and len(prices) == 3
+    assert canceled == ["ord-1", "ord-2"]
+    assert recorded == [("open", 0.85, "ord-3")]
+
+
+def test_ladder_keeps_a_fill_that_raced_the_cancel():
+    rec = _Recorder()
+    deps, prices, canceled, recorded = _with_ladder(
+        rec, Proposal(Direction.BULLISH, 0.9, "up"), ["new", "filled"])
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "opened" and len(prices) == 1 and canceled == ["ord-1"]
+    assert recorded == [("open", 0.85, "ord-1")]
+
+
+def test_ladder_last_step_still_working_goes_pending():
+    rec = _Recorder()
+    deps, prices, canceled, recorded = _with_ladder(
+        rec, Proposal(Direction.BULLISH, 0.9, "up"), ["new", "canceled", "new", "canceled", "new"])
+    res = run_cycle("SPY", deps)
+    assert res["fill"] == "pending" and len(prices) == 3 and len(canceled) == 2
+    assert recorded == [("pending", None, "ord-3")]
+
+
+def test_ladder_off_is_a_single_shot():
+    rec = _Recorder()
+    deps, prices, canceled, recorded = _with_ladder(rec, Proposal(Direction.BULLISH, 0.9, "up"), ["new"])
+    deps.entry_ladder = EntryLadder(step=0.02, max_steps=0)
+    res = run_cycle("SPY", deps)
+    assert res["fill"] == "pending" and len(prices) == 1 and canceled == []
+
+
+def test_condor_first_wing_gets_the_ladder_too():
+    rec = _Recorder()
+    deps, prices, canceled, recorded = _with_ladder(
+        rec, Proposal(Direction.NEUTRAL, 0.9, "rango"), ["new", "canceled", "filled", "filled"])
+    res = run_cycle("SPY", deps)
+    assert res["structure"] == "iron_condor" and len(recorded) == 2 and len(prices) == 3

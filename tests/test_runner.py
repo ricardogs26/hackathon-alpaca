@@ -49,6 +49,7 @@ def _settings(**over):
                 trend_flat_pct=1.0, vol_high_pct=1.2,
                 entry_fill_wait_s=0.0, entry_order_max_age_s=120.0, close_fill_wait_s=0.0,
                 close_order_max_age_s=60.0, close_limit_step=0.05, close_limit_max_steps=6,
+                entry_limit_step=0.02, entry_limit_max_steps=2,
                 reconcile_alert_minutes=30.0, reconcile_auto=True, reconcile_max_auto_fixes_per_day=5,
                 reconcile_lookback_days=10)
     base.update(over)
@@ -446,7 +447,8 @@ def test_build_deps_resolves_rules_and_selection_by_group(monkeypatch):
     uni = parse_groups("index:SPY,QQQ,IWM;megacap:AAPL")
     monkeypatch.setattr(runner, "get_settings", lambda: SimpleNamespace(
         universe=uni, expiry_min_days=2, expiry_max_days=3, trend_flat_pct=1.0,
-        vol_high_pct=1.2, agent_rich_context=True))
+        vol_high_pct=1.2, agent_rich_context=True, entry_fill_wait_s=10.0,
+        entry_limit_step=0.02, entry_limit_max_steps=2))
     prm = Params({"group:megacap": {"max_per_group": 1, "short_delta": 0.25}})
     d_spy, d_aapl = runner._build_deps(prm, "SPY"), runner._build_deps(prm, "AAPL")
     assert d_spy.rules.max_per_group == 2 and d_aapl.rules.max_per_group == 1

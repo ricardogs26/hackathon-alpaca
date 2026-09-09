@@ -5,6 +5,22 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.14.0 — 2026-09-09 · entry limit ladder: mid → mid−step → natural
+
+With the limit finally honoured (0.13.0), the first two entries of 9-Sep never
+filled: SPY at 0.86 against a natural credit of 0.85, AAPL at 0.52 against 0.50.
+Alpaca paper fills a multi-leg only when it is marketable (credit ≤ short bid −
+long ask); it never improves on the quote. A mid limit alone is a lottery.
+
+- `_place` walks the limit down: the spread's mid, then the current mid −
+  `ENTRY_LIMIT_STEP` (0.02) floored at the natural credit, then the natural credit
+  itself (`ENTRY_LIMIT_MAX_STEPS` = 2 rungs after the mid; 0 = single shot as
+  before). One `ENTRY_FILL_WAIT_S` wait per rung; a working order is cancelled and
+  re-read before the next rung, so a fill that races the cancel is kept. The
+  condor's first wing inherits the ladder.
+- `broker.spread_quotes` gives the live (mid, natural) pair; `ladder_price` is
+  pure and never chases a rising market above the previous rung.
+
 ## 0.13.0 — 2026-09-09 · the entry limit was never a limit; the breaker weighs the streak
 
 Analysis of the 8-Sep session (four positions, four flatten closes, −$156):

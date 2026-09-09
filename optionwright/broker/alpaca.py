@@ -371,6 +371,22 @@ def spread_snapshot(short_symbol: str, long_symbol: str) -> dict | None:
     }
 
 
+def spread_quotes(short_symbol: str, long_symbol: str) -> tuple[float | None, float | None]:
+    """(mid credit, natural credit) of the spread right now. Natural = short bid −
+    long ask: the credit a marketable order gets at once. None when a side is missing."""
+    from alpaca.data.requests import OptionLatestQuoteRequest
+
+    resp = _option_data_client().get_option_latest_quote(
+        OptionLatestQuoteRequest(symbol_or_symbols=[short_symbol, long_symbol], feed="indicative")
+    )
+    sq, lq = resp.get(short_symbol), resp.get(long_symbol)
+    if not sq or not lq or None in (sq.bid_price, sq.ask_price, lq.bid_price, lq.ask_price):
+        return None, None
+    mid = (sq.bid_price + sq.ask_price) / 2 - (lq.bid_price + lq.ask_price) / 2
+    natural = sq.bid_price - lq.ask_price
+    return round(max(0.0, mid), 4), round(max(0.0, natural), 4)
+
+
 def current_spread_price(short_symbol: str, long_symbol: str) -> float | None:
     """
     Current debit to close the spread (short mid − long mid). This is what you'd
