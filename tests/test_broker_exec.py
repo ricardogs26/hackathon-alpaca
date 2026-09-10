@@ -80,3 +80,24 @@ def test_close_args_reverse_intents():
     short, long = legs
     assert short["side"] == "buy" and short["position_intent"] == "buy_to_close"
     assert long["side"] == "sell" and long["position_intent"] == "sell_to_close"
+
+
+# ── 0.14.2: every alpaca-py call carries a timeout ────────────────────────────
+def test_alpaca_sessions_get_a_default_timeout():
+    from optionwright.broker.alpaca import _with_timeout
+
+    calls = []
+
+    class _Session:
+        def request(self, method, url, **kw):
+            calls.append(kw)
+            return "ok"
+
+    class _Client:
+        _session = _Session()
+
+    c = _with_timeout(_Client(), connect_s=5.0, read_s=20.0)
+    assert c._session.request("GET", "/clock") == "ok"
+    assert calls[-1]["timeout"] == (5.0, 20.0)
+    c._session.request("GET", "/clock", timeout=3)     # an explicit timeout wins
+    assert calls[-1]["timeout"] == 3

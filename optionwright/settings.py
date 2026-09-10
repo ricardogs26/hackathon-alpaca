@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(default="not-needed", alias="LLM_API_KEY")
     llm_model: str = Field(default="qwen3.5:9b", alias="LLM_MODEL")
     llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
+    # 0.14.2: alpaca-py sends no timeout; a stalled read at the 10-Sep open froze both jobs for 2 h.
+    alpaca_connect_timeout_s: float = Field(default=5.0, alias="ALPACA_CONNECT_TIMEOUT_S")
+    alpaca_read_timeout_s: float = Field(default=20.0, alias="ALPACA_READ_TIMEOUT_S")
     # Ollama serves qwen3.5 in "thinking" mode by default (~22s/call and it can
     # eat the whole token budget on hidden reasoning, returning empty content).
     # Its OpenAI-compatible endpoint ignores think=false, so for Ollama we call

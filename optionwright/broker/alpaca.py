@@ -30,12 +30,37 @@ ALPACA_CLI = os.environ.get("ALPACA_CLI_BIN", "alpaca")
 
 
 # ── Clients (lazy, cached) ────────────────────────────────────────────────────
+def _with_timeout(client, connect_s: float, read_s: float):
+    """alpaca-py issues `Session.request(method, url, **opts)` with NO timeout.
+    10-Sep-2026: at the 09:30 open both scheduler jobs blocked on a read that
+    never returned (4 sockets ESTABLISHED, empty queues, 2 h) — zero cycles all
+    morning. A default timeout on the client's session bounds every call it
+    makes; an explicit timeout passed by a caller still wins."""
+    session = getattr(client, "_session", None)
+    if session is None or getattr(session, "_ow_timeout", False):
+        return client
+    raw = session.request
+
+    def request(method, url, **kw):
+        kw.setdefault("timeout", (connect_s, read_s))
+        return raw(method, url, **kw)
+
+    session.request = request
+    session._ow_timeout = True
+    return client
+
+
+def _timeouts() -> tuple[float, float]:
+    s = get_settings()
+    return float(s.alpaca_connect_timeout_s), float(s.alpaca_read_timeout_s)
+
+
 @lru_cache(maxsize=1)
 def _trading_client():
     from alpaca.trading.client import TradingClient
 
     s = get_settings()
-    return TradingClient(s.alpaca_api_key, s.alpaca_secret_key, paper=True)
+    return _with_timeout(TradingClient(s.alpaca_api_key, s.alpaca_secret_key, paper=True), *_timeouts())
 
 
 @lru_cache(maxsize=1)
@@ -43,7 +68,7 @@ def _option_data_client():
     from alpaca.data.historical.option import OptionHistoricalDataClient
 
     s = get_settings()
-    return OptionHistoricalDataClient(s.alpaca_api_key, s.alpaca_secret_key)
+    return _with_timeout(OptionHistoricalDataClient(s.alpaca_api_key, s.alpaca_secret_key), *_timeouts())
 
 
 @lru_cache(maxsize=1)
@@ -51,7 +76,7 @@ def _stock_data_client():
     from alpaca.data.historical.stock import StockHistoricalDataClient
 
     s = get_settings()
-    return StockHistoricalDataClient(s.alpaca_api_key, s.alpaca_secret_key)
+    return _with_timeout(StockHistoricalDataClient(s.alpaca_api_key, s.alpaca_secret_key), *_timeouts())
 
 
 # ── Pure mapping (unit-tested, no network) ────────────────────────────────────

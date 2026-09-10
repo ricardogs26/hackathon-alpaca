@@ -5,6 +5,22 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.14.2 — 2026-09-10 · every Alpaca call has a timeout
+
+At the 09:30 ET open both scheduler jobs started and never returned: no
+decision all morning, the heartbeat paging every 10 minutes, and in the pod
+four sockets to `paper-api.alpaca.markets` ESTABLISHED with empty queues plus
+five to `data.alpaca.markets` in CLOSE_WAIT — reads waiting for a response the
+server had already abandoned. alpaca-py calls `Session.request(method, url,
+**opts)` with no timeout, so a stalled read blocks forever and APScheduler's
+`max_instances=1` then skips every later run. Recovered by restarting the pod
+at 11:43 ET (2 h 13 min lost).
+
+- `_with_timeout` wraps the session of the three alpaca-py clients (trading,
+  option data, stock data) with a default `(ALPACA_CONNECT_TIMEOUT_S 5,
+  ALPACA_READ_TIMEOUT_S 20)`; a caller's explicit timeout still wins. The
+  REST helpers already used httpx with `timeout=20`, the CLI 30 s, the LLM its own.
+
 ## 0.14.1 — 2026-09-09 · the fill is the credit
 
 First ladder fill in production: NVDA bear call priced at 0.46 mid, filled at
