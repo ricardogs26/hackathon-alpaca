@@ -5,6 +5,13 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.15.1 — 2026-09-10 · the expiry listing reads the whole window
+
+`listed_expiries` asked Alpaca for 200 contracts: SPY has hundreds of strikes
+per daily expiry, so a 3-session window came back as a single expiry (16-Sep,
+no 17 or 18) and IWM lost the Friday. The limit is now 10,000 — one call, the
+full window.
+
 ## 0.15.0 — 2026-09-10 · an illiquid expiry falls through to the next listed
 
 Thursday's 2-3 session window lands on Monday, and Monday chains are dead for

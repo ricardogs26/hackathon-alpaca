@@ -238,8 +238,8 @@ def listed_expiries(underlying: str, min_days: int, max_days: int) -> list[str]:
         gte, lte = today + timedelta(days=min_days), today + timedelta(days=max_days)
     req = GetOptionContractsRequest(
         underlying_symbols=[underlying], status=AssetStatus.ACTIVE,
-        expiration_date_gte=gte, expiration_date_lte=lte, limit=200,
-    )
+        expiration_date_gte=gte, expiration_date_lte=lte, limit=10_000,
+    )   # 10-Sep-2026: at 200, SPY's window (hundreds of strikes per daily expiry) listed one expiry of three
     contracts = _trading_client().get_option_contracts(req).option_contracts or []
     return sorted({str(c.expiration_date) for c in contracts})
 
