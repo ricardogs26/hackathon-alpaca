@@ -5,6 +5,17 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.14.3 — 2026-09-10 · the clock retries, then trusts a recent read
+
+With timeouts in place (0.14.2) the morning's network trouble showed its real
+shape: about half of all TCP connects from the lab failed for an hour (ping
+clean, Alpaca status green — the path, not the broker). One failed `get_clock`
+at the top of `run_entries` threw the whole 3-minute pass away.
+
+- `_clock()` tries the broker twice and, failing that, returns the cached read
+  if it is under 15 minutes old (`_CLOCK_STALE_S`) with a warning; older than
+  that, or never read, it still raises. A session does not flip in 15 minutes.
+
 ## 0.14.2 — 2026-09-10 · every Alpaca call has a timeout
 
 At the 09:30 ET open both scheduler jobs started and never returned: no

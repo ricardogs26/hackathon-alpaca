@@ -41,6 +41,8 @@ def _account() -> tuple[float, float]:
 
 
 _CLOCK_TTL = 15.0                       # seconds; two jobs share one clock read
+_CLOCK_STALE_S = 15 * 60.0              # 0.14.3: a cached clock this old still beats losing the pass
+_CLOCK_RETRIES = 2                      # attempts at the broker before falling back
 _clock_cache: tuple[float, bool, object] | None = None   # (monotonic, is_open, next_close)
 _exit_lock = threading.Lock()           # exits passes never overlap each other
 
@@ -52,11 +54,23 @@ def _clock() -> tuple[bool, object]:
     now = time.monotonic()
     if _clock_cache is not None and now - _clock_cache[0] < _CLOCK_TTL:
         return _clock_cache[1], _clock_cache[2]
-    clk = alpaca._trading_client().get_clock()
-    is_open = bool(clk.is_open)
-    next_close = getattr(clk, "next_close", None)
-    _clock_cache = (now, is_open, next_close)
-    return is_open, next_close
+    # 10-Sep-2026: half the TCP connects to Alpaca failed for an hour; one failed
+    # clock read at the top of run_entries threw the whole pass away. Retry, then
+    # trust a clock read minutes ago — the session does not flip in 15 minutes.
+    last_exc: Exception | None = None
+    for _ in range(_CLOCK_RETRIES):
+        try:
+            clk = alpaca._trading_client().get_clock()
+            is_open = bool(clk.is_open)
+            next_close = getattr(clk, "next_close", None)
+            _clock_cache = (now, is_open, next_close)
+            return is_open, next_close
+        except Exception as exc:  # noqa: BLE001 — any transport failure
+            last_exc = exc
+    if _clock_cache is not None and now - _clock_cache[0] < _CLOCK_STALE_S:
+        logger.warning("clock unreadable (%s); using the value from %.0fs ago", last_exc, now - _clock_cache[0])
+        return _clock_cache[1], _clock_cache[2]
+    raise last_exc  # type: ignore[misc]
 
 
 def _market_open() -> bool:

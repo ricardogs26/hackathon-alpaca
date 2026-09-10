@@ -720,3 +720,47 @@ def test_reconciler_can_be_switched_off(monkeypatch):
     monkeypatch.setattr(runner.alpaca, "orders_for_symbols", lambda syms, days=10: (_ for _ in ()).throw(AssertionError("must not be called")))
     runner.manage_positions()
     assert closes == [] and runner.reconciled() is False
+
+
+# ── 0.14.3: a flaky broker does not lose a whole pass ─────────────────────────
+class _FlakyClock(_TradingClient):
+    def __init__(self, is_open, fail_after):
+        super().__init__(is_open)
+        self.fail_after = fail_after
+
+    def get_clock(self):
+        self.calls += 1
+        if self.calls > self.fail_after:
+            raise ConnectionError("Connection to paper-api.alpaca.markets timed out")
+        return _Clock(self._open, self._next_close)
+
+
+def test_clock_retries_once_then_uses_the_recent_cache(monkeypatch):
+    monkeypatch.setattr(runner, "_clock_cache", None)
+    tc = _FlakyClock(True, fail_after=1)
+    monkeypatch.setattr(runner.alpaca, "_trading_client", lambda: tc)
+    assert runner._clock()[0] is True and tc.calls == 1            # fresh read, cached
+    t0 = runner._clock_cache[0]
+    monkeypatch.setattr(runner.time, "monotonic", lambda: t0 + runner._CLOCK_TTL + 1)   # cache expired
+    assert runner._clock()[0] is True                              # broker down: retried, then the cache
+    assert tc.calls == 3                                           # 1 good + 2 failed attempts
+
+
+def test_clock_raises_when_the_cache_is_too_old(monkeypatch):
+    monkeypatch.setattr(runner, "_clock_cache", None)
+    tc = _FlakyClock(True, fail_after=1)
+    monkeypatch.setattr(runner.alpaca, "_trading_client", lambda: tc)
+    runner._clock()
+    t0 = runner._clock_cache[0]
+    monkeypatch.setattr(runner.time, "monotonic", lambda: t0 + runner._CLOCK_STALE_S + 1)
+    with pytest.raises(ConnectionError):
+        runner._clock()
+
+
+def test_clock_raises_with_no_cache_at_all(monkeypatch):
+    monkeypatch.setattr(runner, "_clock_cache", None)
+    tc = _FlakyClock(True, fail_after=0)
+    monkeypatch.setattr(runner.alpaca, "_trading_client", lambda: tc)
+    with pytest.raises(ConnectionError):
+        runner._clock()
+    assert tc.calls == 2
