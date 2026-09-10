@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: optionwright
-          image: registry.richardx.dev/optionwright:0.14.3
+          image: registry.richardx.dev/optionwright:0.15.0
           ports:
             - containerPort: 8080
           env:
@@ -80,6 +80,8 @@ spec:
               value: "2"
             - name: EXPIRY_MAX_DAYS
               value: "3"
+            - name: EXPIRY_FALLBACK_MAX_DAYS   # 0.15.0: no liquid spread in the window -> next listed expiries up to here (6 = Friday from any weekday)
+              value: "6"
             - name: MAX_OPEN_POSITIONS
               value: "6"
             - name: MAX_PER_UNDERLYING

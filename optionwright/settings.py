@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     # entries
     expiry_min_days: int = Field(default=2, alias="EXPIRY_MIN_DAYS")   # trading sessions
     expiry_max_days: int = Field(default=3, alias="EXPIRY_MAX_DAYS")
+    # 0.15.0: with no liquid spread in the window, try the next listed expiries up to this
+    # many sessions (Thu/Fri land on Mon/Tue chains with OI ~0 for megacaps; 6 reaches Friday
+    # from any weekday). 0 = never look past EXPIRY_MAX_DAYS.
+    expiry_fallback_max_days: int = Field(default=6, alias="EXPIRY_FALLBACK_MAX_DAYS")
     max_open_positions: int = Field(default=6, alias="MAX_OPEN_POSITIONS")
     max_per_underlying: int = Field(default=2, alias="MAX_PER_UNDERLYING")
     max_per_group: int = Field(default=2, alias="MAX_PER_GROUP")

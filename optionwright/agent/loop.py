@@ -85,6 +85,7 @@ class Deps:
     cancel_order: Callable[[str], bool] = None
     requote: Callable[[VerticalSpread], tuple[float | None, float | None]] = None   # -> (mid_now, natural_now)
     entry_ladder: EntryLadder | None = None          # None = single shot at the spread's credit
+    next_expiries: Callable[[str], list[str]] = None   # (underlying) -> listed expiries past the window, nearest first; None = never look further
 
 
 def _candidate_summary(spread: VerticalSpread | None) -> dict | None:
@@ -226,7 +227,7 @@ def _open_condor(underlying: str, deps: Deps, rules: RuleSet, equity: float, pro
     logger.info("cycle %s -> iron condor x%d (%s)", underlying, n, ids)
     return {"underlying": underlying, "action": "opened", "contracts": n, "direction": "neutral",
             "structure": "iron_condor" if len(ids) == 2 else "half_condor", "confidence": proposal.confidence,
-            "position_ids": ids}
+            "position_ids": ids, "expiry": bull_put.expiry}
 
 
 def run_cycle(underlying: str, deps: Deps) -> dict:
@@ -244,14 +245,33 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
     signals = _safe(lambda: deps.signals(underlying, expiry)) if (deps.rich_context and deps.signals) else {}
     regime = signals.get("regimen")
 
-    puts = deps.fetch_chain(underlying, expiry, Right.PUT)
-    calls = deps.fetch_chain(underlying, expiry, Right.CALL)
     sel = deps.select or SelectParams()
-    width = _width(deps, underlying, puts + calls, sel)
-    kw = dict(short_delta=sel.delta_for(regime), width=width, width_tolerance=sel.width_tolerance,
-              min_oi=sel.min_open_interest, max_spread_pct=sel.max_quote_spread_pct)
-    bull_put = build_spread(puts, Direction.BULLISH, expiry, **kw)
-    bear_call = build_spread(calls, Direction.BEARISH, expiry, **kw)
+
+    def _spreads(exp: str):
+        puts = deps.fetch_chain(underlying, exp, Right.PUT)
+        calls = deps.fetch_chain(underlying, exp, Right.CALL)
+        width = _width(deps, underlying, puts + calls, sel)
+        kw = dict(short_delta=sel.delta_for(regime), width=width, width_tolerance=sel.width_tolerance,
+                  min_oi=sel.min_open_interest, max_spread_pct=sel.max_quote_spread_pct)
+        return build_spread(puts, Direction.BULLISH, exp, **kw), build_spread(calls, Direction.BEARISH, exp, **kw)
+
+    bull_put, bear_call = _spreads(expiry)
+    # 0.15.0: the window's expiry can be a dead chain (Thu 10-Sep-2026: Mon 14
+    # chains with OI median 0 on AAPL/IWM/NVDA/AMZN/TSLA, 78 abstains each while
+    # Fri 18 had thousands). Walk the next listed expiries, nearest first, and
+    # take the first one with a tradable side. Never past the fallback window.
+    if bull_put is None and bear_call is None and deps.next_expiries is not None:
+        try:
+            alternatives = list(deps.next_expiries(underlying) or [])
+        except Exception as exc:  # a failed lookup never costs the cycle
+            logger.warning("%s: next expiries unavailable (%s)", underlying, exc)
+            alternatives = []
+        for alt in alternatives:
+            bull_put, bear_call = _spreads(alt)
+            if bull_put is not None or bear_call is not None:
+                logger.info("%s: no liquid spread at %s, using %s", underlying, expiry, alt)
+                expiry = alt
+                break
 
     # Liquidity screen: with no tradable spread on either side there is nothing
     # to decide — abstain without spending an LLM call (TLT/GLD/XLE/XLF at 2-3
@@ -322,4 +342,4 @@ def run_cycle(underlying: str, deps: Deps) -> dict:
     logger.info("cycle %s -> %s x%d (%s, %s)", underlying, proposal.direction.value, verdict.contracts, pos_id, outcome)
     return {"underlying": underlying, "action": "opened", "contracts": verdict.contracts,
             "direction": proposal.direction.value, "confidence": proposal.confidence,
-            "order_id": order_id, "position_id": pos_id, "fill": outcome}
+            "order_id": order_id, "position_id": pos_id, "fill": outcome, "expiry": chosen.expiry}

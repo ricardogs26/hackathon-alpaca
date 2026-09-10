@@ -434,3 +434,44 @@ def test_condor_first_wing_gets_the_ladder_too():
         rec, Proposal(Direction.NEUTRAL, 0.9, "rango"), ["new", "canceled", "filled", "filled"])
     res = run_cycle("SPY", deps)
     assert res["structure"] == "iron_condor" and len(recorded) == 2 and len(prices) == 3
+
+
+# ── 0.15.0: an illiquid primary expiry falls through to the next listed ones ──
+def _chain_by_expiry(liquid_expiry):
+    """The primary expiry returns quotes with no open interest (Monday chains on
+    10-Sep-2026: OI median 0); `liquid_expiry` returns the normal chains."""
+    def fetch(u, e, r):
+        base = _put_chain() if r is Right.PUT else _call_chain()
+        if e == liquid_expiry:
+            return [OptionQuote(q.symbol, q.underlying, q.right, q.strike, e, q.bid, q.ask, q.delta, q.open_interest, q.volume) for q in base]
+        return [OptionQuote(q.symbol, q.underlying, q.right, q.strike, e, q.bid, q.ask, q.delta, 0, 0) for q in base]
+    return fetch
+
+
+def test_illiquid_primary_expiry_falls_through_to_the_next_listed():
+    rec = _Recorder()
+    deps = rec.deps(Proposal(Direction.BULLISH, 0.8, "up"))
+    deps.fetch_chain = _chain_by_expiry("2026-09-18")
+    deps.next_expiries = lambda u: ["2026-09-15", "2026-09-18"]
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "opened"
+    assert rec.submitted[0][0].expiry == "2026-09-18" and res.get("expiry") == "2026-09-18"
+
+
+def test_no_fallback_expiries_still_abstains_illiquid():
+    rec = _Recorder()
+    deps = rec.deps(Proposal(Direction.BULLISH, 0.8, "up"))
+    deps.fetch_chain = _chain_by_expiry("2026-09-18")
+    res = run_cycle("SPY", deps)                       # next_expiries not wired
+    assert res["action"] == "abstain" and res["reason"] == "illiquid chain"
+    deps.next_expiries = lambda u: ["2026-09-15"]      # wired, but that one is illiquid too
+    assert run_cycle("SPY", deps)["reason"] == "illiquid chain"
+
+
+def test_liquid_primary_expiry_never_looks_further():
+    rec = _Recorder()
+    deps = rec.deps(Proposal(Direction.BULLISH, 0.8, "up"))
+    asked = []
+    deps.next_expiries = lambda u: asked.append(u) or ["2026-09-18"]
+    res = run_cycle("SPY", deps)
+    assert res["action"] == "opened" and asked == [] and rec.submitted[0][0].expiry == "2026-09-04"

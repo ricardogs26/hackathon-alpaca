@@ -211,6 +211,7 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `LEARNING_CRON_UTC` / `WHATSAPP_SEND_URL` / `WHATSAPP_TO` | Nightly memory schedule and where its summary is sent (WhatsApp off when empty) |
 | `AGENT_RICH_CONTEXT` | Feed the model market signals, recent outcomes and the open book |
 | `EXPIRY_MIN_DAYS` / `EXPIRY_MAX_DAYS` | Target expiration window, in trading sessions from today |
+| `EXPIRY_FALLBACK_MAX_DAYS` | With no liquid spread in the window, try the next listed expiries up to this many sessions (6 reaches Friday from any weekday; 0 = never) |
 
 ## Architecture
 

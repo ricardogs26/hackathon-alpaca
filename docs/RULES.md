@@ -57,8 +57,12 @@ unknown means the gate is skipped, never that it invents a number.
 | `width_tolerance` (0.5) | the long leg must sit within this fraction of the width from the target, otherwise no spread (never a silent 10-wide) |
 | `min_open_interest` (100) / `max_quote_spread_pct` (0.15) | a leg is liquid only with this much open interest and a bid-ask no wider than 15 % of the mid |
 
-With no tradable spread on either side the cycle abstains (`illiquid chain`)
-without calling the model. Universe and groups: `UNDERLYING_GROUPS`.
+With no tradable spread on either side at the window's expiry, the cycle walks
+the next listed expiries up to `EXPIRY_FALLBACK_MAX_DAYS` (6) sessions, nearest
+first, and takes the first with a tradable side (Thu 10-Sep-2026: the Mon 14
+chains had OI median 0 on AAPL/IWM/NVDA/AMZN/TSLA while Fri 18 had thousands —
+78 abstains each). Still nothing → abstains (`illiquid chain`) without calling
+the model. Universe and groups: `UNDERLYING_GROUPS`.
 
 The model answers `bullish`, `bearish`, `neutral` or `abstain`. **Neutral** is
 an iron condor: the bull put and the bear call together, each gated and

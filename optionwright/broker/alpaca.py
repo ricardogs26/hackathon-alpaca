@@ -212,33 +212,42 @@ def _upcoming_sessions(today: date, horizon_days: int = 21) -> list[date]:
     return [c.date for c in cal]
 
 
-def nearest_expiry(underlying: str, min_days: int = 1, max_days: int = 10) -> str | None:
+def _today() -> date:
+    return date.today()
+
+
+def listed_expiries(underlying: str, min_days: int, max_days: int) -> list[str]:
     """
-    Nearest listed expiration within [min_days, max_days] trading sessions from
-    today. If the calendar can't be read, degrades to calendar days (the old
-    behaviour) rather than skipping the cycle.
+    Listed expirations within [min_days, max_days] trading sessions from today,
+    sorted, unique. Empty when the window is empty or nothing is listed. If the
+    calendar can't be read, degrades to calendar days rather than skipping the cycle.
     """
     from alpaca.trading.enums import AssetStatus
     from alpaca.trading.requests import GetOptionContractsRequest
 
-    today = date.today()
+    if max_days < min_days or min_days < 1:
+        return []
+    today = _today()
     try:
         window = _session_window(today, _upcoming_sessions(today), min_days, max_days)
         if window is None:
-            return None
+            return []
         gte, lte = window
     except Exception as exc:  # calendar hiccup: never let it cost a cycle
         logger.warning("session calendar unavailable (%s); using calendar days", exc)
         gte, lte = today + timedelta(days=min_days), today + timedelta(days=max_days)
     req = GetOptionContractsRequest(
-        underlying_symbols=[underlying],
-        status=AssetStatus.ACTIVE,
-        expiration_date_gte=gte,
-        expiration_date_lte=lte,
-        limit=1,
+        underlying_symbols=[underlying], status=AssetStatus.ACTIVE,
+        expiration_date_gte=gte, expiration_date_lte=lte, limit=200,
     )
-    contracts = _trading_client().get_option_contracts(req).option_contracts
-    return str(contracts[0].expiration_date) if contracts else None
+    contracts = _trading_client().get_option_contracts(req).option_contracts or []
+    return sorted({str(c.expiration_date) for c in contracts})
+
+
+def nearest_expiry(underlying: str, min_days: int = 1, max_days: int = 10) -> str | None:
+    """Nearest listed expiration within [min_days, max_days] trading sessions from today."""
+    listed = listed_expiries(underlying, min_days, max_days)
+    return listed[0] if listed else None
 
 
 # The whole-chain fetch below is the slowest call in a cycle (10-30s) and it's

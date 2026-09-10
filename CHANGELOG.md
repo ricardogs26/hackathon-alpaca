@@ -5,6 +5,22 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## 0.15.0 — 2026-09-10 · an illiquid expiry falls through to the next listed
+
+Thursday's 2-3 session window lands on Monday, and Monday chains are dead for
+these names: AAPL 14-Sep puts OI median 0 (4 liquid strikes) against 18-Sep
+2,079 (15); IWM 0 vs 5,867; NVDA 260 vs 5,454. Five of seven underlyings
+abstained `illiquid chain` 78 times each on 10-Sep; the day before, zero.
+Friday's window (Tue/Wed) does the same.
+
+- `run_cycle` builds the spreads at the window's expiry and, with no tradable
+  side, walks `next_expiries` (listed expiries from `EXPIRY_MAX_DAYS`+1 up to
+  `EXPIRY_FALLBACK_MAX_DAYS` sessions, nearest first) taking the first with one.
+  The decision, the positions and the result carry the expiry actually used.
+- `broker.listed_expiries` (sorted, unique, inside a session window) replaces
+  the one-contract lookup; `nearest_expiry` is its first element.
+- Default 6 sessions, not 5: from a Thursday the next Friday is the 6th session.
+
 ## 0.14.3 — 2026-09-10 · the clock retries, then trusts a recent read
 
 With timeouts in place (0.14.2) the morning's network trouble showed its real

@@ -28,3 +28,29 @@ def test_none_when_calendar_is_too_short_or_window_invalid():
     assert _session_window(date(2026, 9, 11), SESSIONS, 1, 3) is None
     assert _session_window(date(2026, 9, 3), SESSIONS, 0, 3) is None
     assert _session_window(date(2026, 9, 3), SESSIONS, 3, 2) is None
+
+
+def test_listed_expiries_are_sorted_unique_and_inside_the_window(monkeypatch):
+    from datetime import date as _d
+    from types import SimpleNamespace
+    from optionwright.broker import alpaca
+
+    seen = {}
+
+    class _TC:
+        def get_calendar(self, req):
+            return [SimpleNamespace(date=d) for d in SESSIONS + [_d(2026, 9, 14), _d(2026, 9, 15), _d(2026, 9, 16), _d(2026, 9, 17), _d(2026, 9, 18)]]
+
+        def get_option_contracts(self, req):
+            seen["gte"], seen["lte"] = req.expiration_date_gte, req.expiration_date_lte
+            return SimpleNamespace(option_contracts=[
+                SimpleNamespace(expiration_date=_d(2026, 9, 18)),
+                SimpleNamespace(expiration_date=_d(2026, 9, 15)),
+                SimpleNamespace(expiration_date=_d(2026, 9, 18)),
+            ])
+
+    monkeypatch.setattr(alpaca, "_trading_client", lambda: _TC())
+    monkeypatch.setattr(alpaca, "_today", lambda: _d(2026, 9, 10))
+    assert alpaca.listed_expiries("AAPL", 4, 5) == ["2026-09-15", "2026-09-18"]
+    assert (seen["gte"], seen["lte"]) == (_d(2026, 9, 16), _d(2026, 9, 17))   # sessions 4 and 5 after Thu 10
+    assert alpaca.listed_expiries("AAPL", 8, 5) == []       # empty window, no call

@@ -527,6 +527,8 @@ def _build_deps(params: Params, underlying: str) -> Deps:
     return Deps(
         account=_account,
         nearest_expiry=lambda u: alpaca.nearest_expiry(u, min_days=s.expiry_min_days, max_days=s.expiry_max_days),
+        next_expiries=(lambda u: alpaca.listed_expiries(u, s.expiry_max_days + 1, s.expiry_fallback_max_days))
+        if s.expiry_fallback_max_days > s.expiry_max_days else None,
         fetch_chain=alpaca.fetch_chain,
         propose=propose,
         build_state=lambda u, eq: store.build_policy_state(
