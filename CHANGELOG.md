@@ -5,6 +5,13 @@ Versions follow semver with meaning: a minor bump is a change in what the agent
 `optionwright/__init__.py`; `make release` uses it as the image tag and the git
 tag is `v<version>`.
 
+## Archived — 2026-10-13
+
+No code change. The paper run ended (31-Aug → 12-Oct-2026, $89,796, −10.2 %),
+the deployment and the public dashboard were retired, and the results and the
+retrospective were written down (`docs/writeup.md` § Results,
+`docs/RETROSPECTIVE.md`). The database was dumped before the teardown.
+
 ## 0.15.1 — 2026-09-10 · the expiry listing reads the whole window
 
 `listed_expiries` asked Alpaca for 200 contracts: SPY has hundreds of strikes

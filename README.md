@@ -6,12 +6,18 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0b7a55.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-270%20passing-3dba8c.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-299%20passing-3dba8c.svg)](tests/)
 [![Trading](https://img.shields.io/badge/trading-paper%20only-a4671a.svg)](#safety)
 
-[Live dashboard](https://optionwright.richardx.dev) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Metrics](https://optionwright.richardx.dev/metrics)
+[Retrospective](docs/RETROSPECTIVE.md) · [Rules](docs/RULES.md) · [Strategy write-up](docs/writeup.md) · [Changelog](CHANGELOG.md)
 
 </div>
+
+> **Archived (2026-10-13).** The agent ran on a paper account from 31-Aug to
+> 12-Oct-2026 and closed at $89,796 (−10.2 %). The live dashboard and the
+> Kubernetes deployment are retired; the code, the rules engine and the tests
+> stay as they were. What worked, what did not and the numbers are in
+> [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md).
 
 ---
 
@@ -252,7 +258,7 @@ k8s/          deployment, ingress, ServiceMonitor, Grafana dashboard
 
 ```bash
 pip install -r requirements.txt
-pytest -q          # 270 tests, no network or account needed
+pytest -q          # 299 tests (281 without a database), no network or account needed
 make db-up         # optional: a throwaway Postgres so tests/test_store_db.py runs (CI has one)
 make lint          # ruff + a node syntax check of the dashboard script
 ```

@@ -20,3 +20,6 @@ venv/
 
 # Claude Code scratch workspace (plans/ledgers live in docs/superpowers instead)
 .superpowers/
+
+# Database dumps (kept locally, 2.8 MB+)
+data/

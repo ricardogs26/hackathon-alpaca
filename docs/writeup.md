@@ -80,14 +80,41 @@ LLM confidence and latency, realized P&L, equity) scraped into Grafana.
 ## How it runs
 
 - **Judges**: `docker compose up` brings up the agent with its own Postgres. Fill `.env` with Alpaca paper keys and an LLM endpoint.
-- **Live**: deployed on Kubernetes, dashboard at `optionwright.richardx.dev`,
-  metrics in Prometheus/Grafana, an external watchdog alerting on failure.
+- **Live** (31-Aug → 13-Oct-2026, retired): deployed on Kubernetes, dashboard at
+  `optionwright.richardx.dev`, metrics in Prometheus/Grafana, an external watchdog
+  alerting on failure.
 
-Test coverage: 270 tests over the deterministic core and the store (Postgres in CI) (spread selection, risk
+Test coverage: 299 tests over the deterministic core and the store (Postgres in CI) (spread selection, risk
 gates, exit decisions, market perception, the multi-leg order builder, the LLM
 parser, and the full pipeline).
 
 ## Results
 
-*(Filled Thursday with the week's real numbers: equity curve, realized P&L, win
-rate, and the count of trades each risk gate vetoed.)*
+Final numbers from the Postgres store on 2026-10-13 (paper account `PA31YQGU372M`,
+$100,000 start, 31-Aug → 12-Oct-2026). Full analysis in
+[RETROSPECTIVE.md](RETROSPECTIVE.md).
+
+| | Judged week (31-Aug → 4-Sep) | After the hackathon (7-Sep → 12-Oct) | Total |
+|---|---|---|---|
+| Equity | $100,000 → $92,568 (−7.4 %) | $92,568 → $89,796 (−3.0 %) | **$89,796 (−10.2 %)** |
+| Closed positions | 23 | 149 | 172 |
+| Win rate | 74 % | 41 % | 45 % |
+| Realized P&L | −$7,059 | −$2,717 | −$9,776 |
+| Peak equity | $102,328 (2-Sep) | | |
+
+- **Judged week**: 17 winners averaging +$174 and 6 losers averaging −$1,510. Every
+  loss was a position that slept overnight (6 bear calls on SPY/QQQ, $18.7k of
+  max loss on one side, liquidated by the 3-Sep rebound); the 11 intraday
+  positions all won (+$1,667).
+- **After the hackathon**: smaller sizing (avg max loss $466 vs $2,500–3,300) and
+  delta-based stops removed the large losses, but the book bled a steady ~$550 a
+  week. 71 of 149 exits were the 15:30 ET overnight flatten (58 small losses);
+  all 48 take-profit exits won (+$1,255); all 26 stops cut the loss where
+  designed (−$2,180).
+- **Decisions**: ~22,200 LLM calls (Qwen2.5-72B on Featherless, 5.7 s average;
+  the local fallback answered 36). About 170 were approved by the gates (0.8 %).
+  Largest vetoes: condor wing blocked by the per-group cap (~5,000), model
+  abstained (2,456), condor missing one wing (1,645), illiquid chain (631).
+- **Nothing the model returned ever increased risk**: all sizing, strikes, stops
+  and exits were computed in code, and the reconciler resolved all 8 book/broker
+  mismatches on its own.
